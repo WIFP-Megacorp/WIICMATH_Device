@@ -49,15 +49,7 @@ void loop() {
     Serial.println("---");
   }
 
-  if(temperature < 10 || temperature > 27) { 
-    statusAlarm = 1;
-    statusActive = 0;
-  } else {
-    statusAlarm = 0;
-    statusActive = 1;
-  }
-
-  if(humidity < 10 || humidity > 70) { 
+  if(temperature < 10 || temperature > 27  || humidity < 10 || humidity > 70) { 
     statusAlarm = 1;
     statusActive = 0;
   } else {
