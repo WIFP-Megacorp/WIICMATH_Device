@@ -39,6 +39,11 @@ void setup() {
   pinMode(PIN_DHT, INPUT);
 
   dht.begin();
+
+  //If first time launching device, run setup
+  if(firstSetup) {
+    modeSetup();
+  }
 }
 
 void loop() {
@@ -46,11 +51,6 @@ void loop() {
   dht_temperature = dht.readTemperature(); 
   time_now = millis();
 
-  //If first time launching device, run setup
-  if(firstSetup) {
-    modeSetup();
-  }
-  
   readSensor();
 
   if(!connected) { //If not connected to internet
@@ -68,7 +68,7 @@ void loop() {
 void modeNormal() {
   Serial.println("Normal operating");
   if(MODULE_RGBLED && setting_light) {
-    ledSignal(1, 0, 1, 0, 0);
+    ledSignal(0, 1, 0, 0);
     millisDelay(1000);
   }
 }
@@ -76,7 +76,7 @@ void modeNormal() {
 void modeConnecting() {
   Serial.println("Attempting to connect to server");
   if(MODULE_RGBLED && setting_light) {
-    ledSignal(1, 0, 0, 1, 1000);
+    ledSignal(0, 0, 1, 1000);
   }
   if(MODULE_BUZZER && setting_sound) {
     tone(PIN_BUZZER, 523, 250);
@@ -96,7 +96,7 @@ void modeSetup() {
 void modeAlarm() {
   Serial.println("It's panic time");
   if(MODULE_RGBLED && setting_light) {
-    ledSignal(1, 1, 0, 0, 500);
+    ledSignal(1, 0, 0, 500);
   }
   if(MODULE_BUZZER && setting_sound) {
     tone(PIN_BUZZER, 2093, 1000);
@@ -108,15 +108,15 @@ void modeAlarm() {
 }
 
 //LED Handling
-void ledSignal(bool active, bool r, bool g, bool b, int delayMs) {
+void ledSignal(bool r, bool g, bool b, int delayMs) {
   turnOffAllLed();
   digitalWrite(11, r);
   digitalWrite(12, g);
   digitalWrite(13, b);
   if (delayMs != 0) {
-    millisDelay(1000);
+    millisDelay(delayMs);
     turnOffAllLed();
-    millisDelay(1000);
+    millisDelay(delayMs);
   }
 }
 
