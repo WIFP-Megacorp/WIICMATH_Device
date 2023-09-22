@@ -138,11 +138,12 @@ void readSensor() {
     Serial.println(F("Failed to read from DHT sensor!"));
     
     return;
-  } else {
-    Serial.println("---");
-    Serial.println("Temp: " + String(dht_temperature, 2) + "°C");
-    Serial.println("Humidity: " + String(dht_humidity, 1) + "%");
   }
+  //glenn var her
+  Serial.println("---");
+  Serial.println("Temp: " + String(dht_temperature, 2) + "°C");
+  Serial.println("Humidity: " + String(dht_humidity, 1) + "%");
+  
 }
 
 void setLimits(int minTemperature, int maxTemperature, int minHumidity, int maxHumidity) {
