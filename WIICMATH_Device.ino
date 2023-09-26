@@ -51,7 +51,7 @@ const char* index_html = R"(
 </html>
 )";
 
-//EEPROM variables
+//EEPROM & WiFi connection variables
 char ssid[32];      // WiFi SSID can be up to 32 characters
 char password[64];  // WiFi password can be up to 64 characters
 
@@ -123,35 +123,7 @@ void modeSetup() {
   //do some things if first launch
   ledSignal(1, 0, 1, 0);
 
-  if (WiFi.status() == WL_NO_MODULE) {
-      Serial.println("Communication with WiFi module failed!");
-      // don't continue
-      while (true);
-    }
-
-  WiFi.beginAP(apSSID, apPassword);
-
-  Serial.println("Waiting 5 seconds to set up Access Point");
-  millisDelay(5000);
-
-  server.begin();
-
-  // you're connected now, so print out the status
-  printWiFiStatus();
-
   while(!connected) {
-    /**
-    WiFiClient client = server.available();
-    if (client) {
-      Serial.println("New client connected");
-      client.println("HTTP/1.1 200 OK");
-      client.println("Content-Type: text/html");
-      client.println();
-      client.println(index_html);
-      client.stop();
-      Serial.println("Client disconnected");
-    }
-    */
     handleConfigure();
   }
 }
@@ -238,9 +210,30 @@ void printWiFiStatus() {
 }
 
 void handleConfigure() {
+  if (WiFi.status() == WL_NO_MODULE) {
+      Serial.println("Communication with WiFi module failed!");
+      // don't continue
+      while (true);
+    }
+
+  WiFi.beginAP(apSSID, apPassword);
+
+  Serial.println("Waiting 5 seconds to set up Access Point");
+  millisDelay(5000);
+
+  server.begin();
+
+  // you're connected now, so print out the status
+  printWiFiStatus();
+
   WiFiClient client = server.available();
   if (!client) {
     return;
+  }
+
+  while(!client.connected()) {
+    Serial.println("Waiting for a client.");
+    millisDelay(1000);
   }
 
   if (client.connected()) {
@@ -285,4 +278,71 @@ void handleConfigure() {
     client.stop();
     Serial.println("Client disconnected");
   }
+
+  if(ssid[0] != 0) {
+    WiFi.end();
+
+    while (status != WL_CONNECTED) {
+      Serial.print("Attempting to connect to WPA SSID: ");
+      Serial.println(ssid);
+      // Connect to WPA/WPA2 network:
+      status = WiFi.begin(ssid, password);
+
+      // wait 5 seconds for connection:
+      delay(5000);
+    }
+
+    printCurrentNet();
+    printWifiData();
+  }
+}
+
+void printCurrentNet() {
+  // print the SSID of the network you're attached to:
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+
+  // print the MAC address of the router you're attached to:
+  byte bssid[6];
+  WiFi.BSSID(bssid);
+  Serial.print("BSSID: ");
+  printMacAddress(bssid);
+
+  // print the received signal strength:
+  long rssi = WiFi.RSSI();
+  Serial.print("signal strength (RSSI):");
+  Serial.println(rssi);
+
+  // print the encryption type:
+  byte encryption = WiFi.encryptionType();
+  Serial.print("Encryption Type:");
+  Serial.println(encryption, HEX);
+  Serial.println();
+}
+
+void printWifiData() {
+  // print your board's IP address:
+  IPAddress ip = WiFi.localIP();
+  Serial.print("IP Address: ");
+  
+  Serial.println(ip);
+
+  // print your MAC address:
+  byte mac[6];
+  WiFi.macAddress(mac);
+  Serial.print("MAC address: ");
+  printMacAddress(mac);
+}
+
+void printMacAddress(byte mac[]) {
+  for (int i = 5; i >= 0; i--) {
+    if (mac[i] < 16) {
+      Serial.print("0");
+    }
+    Serial.print(mac[i], HEX);
+    if (i > 0) {
+      Serial.print(":");
+    }
+  }
+  Serial.println();
 }
