@@ -211,89 +211,95 @@ void printWiFiStatus() {
 
 void handleConfigure() {
   if (WiFi.status() == WL_NO_MODULE) {
-      Serial.println("Communication with WiFi module failed!");
-      // don't continue
-      while (true);
-    }
+    Serial.println("Communication with WiFi module failed!");
+    // Don't continue
+    while (true);
+  }
 
+  // Create an access point
   WiFi.beginAP(apSSID, apPassword);
 
-  Serial.println("Waiting 5 seconds to set up Access Point");
-  millisDelay(5000);
-
+  Serial.println("Waiting for a client to configure...");
   server.begin();
 
-  // you're connected now, so print out the status
+  // You're connected now, so print out the status
   printWiFiStatus();
 
   WiFiClient client = server.available();
-  if (!client) {
-    return;
-  }
-
-  while(!client.connected()) {
-    Serial.println("Waiting for a client.");
-    millisDelay(1000);
-  }
-
-  if (client.connected()) {
+  if (client) {
     Serial.println("New client connected");
-
-    client.println("HTTP/1.1 200 OK");
-    client.println("Content-Type: text/html");
-    client.println();
-    client.println(index_html);
 
     String request = client.readStringUntil('\r');
     if (request.indexOf("POST /configure") != -1) {
       // Read the POST data from the client
-      while (client.available()) {
-        String line = client.readStringUntil('\r');
+      String line;
+      while (client.connected() && line != "\n") {
+        line = client.readStringUntil('\r');
         if (line.indexOf("ssid=") != -1) {
           line.remove(0, 5); // Remove "ssid=" from the line
           line.trim();
           line.toCharArray(ssid, sizeof(ssid));
-          Serial.println("Saved ssid: ");
-          Serial.write(ssid,strlen(ssid));
+          Serial.println("Saved SSID:");
+          Serial.println(ssid);
         }
         if (line.indexOf("password=") != -1) {
           line.remove(0, 9); // Remove "password=" from the line
           line.trim();
           line.toCharArray(password, sizeof(password));
-          Serial.println("Saved pword");
-          Serial.write(password,strlen(password));
+          Serial.println("Saved password:");
+          Serial.println(password);
         }
       }
 
-      // Save data to EEPROM
-      //saveCredentialsToEEPROM(ssid, password);
-      Serial.println("Something something");
+      // Save data to Preferences
+      //saveCredentialsToPreferences(ssid, password);
+      Serial.println("Credentials saved");
 
       // Send a response back to the client
       client.println("HTTP/1.1 200 OK");
       client.println("Content-Type: text/plain");
       client.println();
       client.println("WiFi credentials saved.");
+      client.stop();
+
+      // Disable the access point
+      WiFi.end();
+
+      // Attempt to connect to the user-provided SSID
+      connectToUserSSID();
+    } else {
+      // Serve the configuration form
+      client.println("HTTP/1.1 200 OK");
+      client.println("Content-Type: text/html");
+      client.println();
+      client.println(index_html);
+      client.stop();
     }
-    client.stop();
-    Serial.println("Client disconnected");
+  }
+}
+
+void connectToUserSSID() {
+  Serial.print("Attempting to connect to user-provided SSID: ");
+  Serial.println(ssid);
+
+  int attempts = 0;
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+    delay(1000);
+    Serial.println("Connecting...");
+    attempts++;
   }
 
-  if(ssid[0] != 0) {
-    WiFi.end();
-
-    while (status != WL_CONNECTED) {
-      Serial.print("Attempting to connect to WPA SSID: ");
-      Serial.println(ssid);
-      // Connect to WPA/WPA2 network:
-      status = WiFi.begin(ssid, password);
-
-      // wait 5 seconds for connection:
-      delay(5000);
-    }
-
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("Connected to user-provided SSID");
     printCurrentNet();
     printWifiData();
+    connected = true;
+  } else {
+    Serial.println("Failed to connect to user-provided SSID.");
+    // You can add error handling here, such as retrying or other actions.
+    void handleConfigure();
   }
 }
 
