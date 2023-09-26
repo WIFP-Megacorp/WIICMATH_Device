@@ -33,20 +33,56 @@ int setting_updateDelay = 1000;
 const char* apSSID = "WIICMATH";    // SSID of the access point
 const char* apPassword = "password";  // Password for the access point
 int status = WL_IDLE_STATUS;
-//WiFiServer server(80);
+
 WiFiServer server(80);
 const char* index_html = R"(
 <!DOCTYPE html>
 <html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            background-color: aqua;
+            font-family: sans-serif;
+        }
+    
+        form {
+            width:50%;
+            margin: auto;
+        }
+        
+        input {
+            width:100%;
+            margin:auto;
+            font-size:20px;
+            min-height:5vh;
+        }
+        
+        h1 {
+            text-align: center;
+        }
+
+        @media screen and (max-width: 480px) {
+            form {
+                width:90%;
+            }
+            input {
+                width:100%;
+            }
+        }
+    </style>
+</head>
 <body>
-  <h2>WiFi Configuration</h2>
-  <form action="/configure" method="POST">
-    <label for="ssid">WiFi SSID:</label>
-    <input type="text" id="ssid" name="ssid"><br><br>
-    <label for="password">WiFi Password:</label>
-    <input type="password" id="password" name="password"><br><br>
-    <input type="submit" value="Submit">
-  </form>
+    <div class="container">
+        <h1>WIICMATH<br>WiFi Configuration</h1>
+        <form action="/configure" method="POST">
+            <label for="ssid">WiFi SSID:</label><br>
+            <input type="text" id="ssid" name="ssid"><br><br>
+            <label for="password">WiFi Password:</label><br>
+            <input type="password" id="password" name="password"><br><br>
+            <input type="submit" value="Submit">
+        </form>
+    </div>
 </body>
 </html>
 )";
@@ -226,64 +262,71 @@ void handleConfigure() {
   printWiFiStatus();
 
   WiFiClient client = server.available();
-  if (client) {
+  if (!client) {
+    return;
+  }
+
+  if (client.connected()) {
     Serial.println("New client connected");
+
+    client.println("HTTP/1.1 200 OK");
+    client.println("Content-Type: text/html");
+    client.println();
+    client.println(index_html);
 
     String request = client.readStringUntil('\r');
     if (request.indexOf("POST /configure") != -1) {
       // Read the POST data from the client
-      String line;
-      while (client.connected() && line != "\n") {
-        line = client.readStringUntil('\r');
-        if (line.indexOf("ssid=") != -1) {
-          line.remove(0, 5); // Remove "ssid=" from the line
-          line.trim();
-          line.toCharArray(ssid, sizeof(ssid));
-          Serial.println("Saved SSID:");
-          Serial.println(ssid);
-        }
-        if (line.indexOf("password=") != -1) {
-          line.remove(0, 9); // Remove "password=" from the line
-          line.trim();
-          line.toCharArray(password, sizeof(password));
-          Serial.println("Saved password:");
-          Serial.println(password);
-        }
+      String body = "";
+      while (client.available()) {
+        char c = client.read();
+        body += c;
+      }
+
+      // Extract SSID and password from the POST data
+      String receivedSSID = "";
+      String receivedPassword = "";
+
+      int ssidIndex = body.indexOf("ssid=");
+      int passwordIndex = body.indexOf("password=");
+      
+      if (ssidIndex != -1 && passwordIndex != -1) {
+        receivedSSID = body.substring(ssidIndex + 5, body.indexOf('&', ssidIndex));
+        receivedPassword = body.substring(passwordIndex + 9);
+        receivedSSID.trim();
+        receivedPassword.trim();
       }
 
       // Save data to Preferences
-      //saveCredentialsToPreferences(ssid, password);
-      Serial.println("Credentials saved");
+      //saveCredentialsToPreferences(receivedSSID, receivedPassword);
+      Serial.println("Received SSID: " + receivedSSID);
+      Serial.println("Received password: " + receivedPassword);
 
       // Send a response back to the client
       client.println("HTTP/1.1 200 OK");
       client.println("Content-Type: text/plain");
       client.println();
       client.println("WiFi credentials saved.");
-      client.stop();
 
-      // Disable the access point
+      // Disable the access point and connect to the user-provided SSID
       WiFi.end();
-
-      // Attempt to connect to the user-provided SSID
-      connectToUserSSID();
-    } else {
-      // Serve the configuration form
-      client.println("HTTP/1.1 200 OK");
-      client.println("Content-Type: text/html");
-      client.println();
-      client.println(index_html);
-      client.stop();
+      connectToUserSSID(receivedSSID, receivedPassword);
     }
+
+    client.stop(); // Close the client connection
+    Serial.println("Client disconnected");
   }
 }
 
-void connectToUserSSID() {
+void connectToUserSSID(const String& receivedSSID, const String& receivedPassword) {
+  String ssidDecoded = urlDecode(receivedSSID);
+  String passwordDecoded = urlDecode(receivedPassword);
+
   Serial.print("Attempting to connect to user-provided SSID: ");
-  Serial.println(ssid);
+  Serial.println(ssidDecoded);
 
   int attempts = 0;
-  WiFi.begin(ssid, password);
+  WiFi.begin(ssidDecoded.c_str(), passwordDecoded.c_str());
 
   while (WiFi.status() != WL_CONNECTED && attempts < 30) {
     delay(1000);
@@ -299,7 +342,8 @@ void connectToUserSSID() {
   } else {
     Serial.println("Failed to connect to user-provided SSID.");
     // You can add error handling here, such as retrying or other actions.
-    void handleConfigure();
+    WiFi.end();
+    handleConfigure(); // Restart the configuration process
   }
 }
 
@@ -351,4 +395,28 @@ void printMacAddress(byte mac[]) {
     }
   }
   Serial.println();
+}
+
+String urlDecode(const String& input) {
+  String output = input;
+  output.replace("+", " ");
+  output.replace("%21", "!");
+  output.replace("%23", "#");
+  output.replace("%24", "$");
+  output.replace("%26", "&");
+  output.replace("%27", "'");
+  output.replace("%28", "(");
+  output.replace("%29", ")");
+  output.replace("%2A", "*");
+  output.replace("%2B", "+");
+  output.replace("%2C", ",");
+  output.replace("%2F", "/");
+  output.replace("%3A", ":");
+  output.replace("%3B", ";");
+  output.replace("%3D", "=");
+  output.replace("%3F", "?");
+  output.replace("%40", "@");
+  output.replace("%5B", "[");
+  output.replace("%5D", "]");
+  return output;
 }
