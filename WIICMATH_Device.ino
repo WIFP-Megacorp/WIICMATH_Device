@@ -1,6 +1,6 @@
 #include "DHT.h" // DHT sensor library
 #include "WiFiS3.h" //WiFi module library
-#include "EEPROM.h"
+//#include "EEPROM.h"
 
 #define DHTTYPE DHT11
 
@@ -140,6 +140,7 @@ void modeSetup() {
   printWiFiStatus();
 
   while(!connected) {
+    /**
     WiFiClient client = server.available();
     if (client) {
       Serial.println("New client connected");
@@ -150,6 +151,8 @@ void modeSetup() {
       client.stop();
       Serial.println("Client disconnected");
     }
+    */
+    handleConfigure();
   }
 }
 
@@ -232,4 +235,54 @@ void printWiFiStatus() {
   Serial.print("To see this page in action, open a browser to http://");
   Serial.println(ip);
 
+}
+
+void handleConfigure() {
+  WiFiClient client = server.available();
+  if (!client) {
+    return;
+  }
+
+  if (client.connected()) {
+    Serial.println("New client connected");
+
+    client.println("HTTP/1.1 200 OK");
+    client.println("Content-Type: text/html");
+    client.println();
+    client.println(index_html);
+
+    String request = client.readStringUntil('\r');
+    if (request.indexOf("POST /configure") != -1) {
+      // Read the POST data from the client
+      while (client.available()) {
+        String line = client.readStringUntil('\r');
+        if (line.indexOf("ssid=") != -1) {
+          line.remove(0, 5); // Remove "ssid=" from the line
+          line.trim();
+          line.toCharArray(ssid, sizeof(ssid));
+          Serial.println("Saved ssid: ");
+          Serial.write(ssid,strlen(ssid));
+        }
+        if (line.indexOf("password=") != -1) {
+          line.remove(0, 9); // Remove "password=" from the line
+          line.trim();
+          line.toCharArray(password, sizeof(password));
+          Serial.println("Saved pword");
+          Serial.write(password,strlen(password));
+        }
+      }
+
+      // Save data to EEPROM
+      //saveCredentialsToEEPROM(ssid, password);
+      Serial.println("Something something");
+
+      // Send a response back to the client
+      client.println("HTTP/1.1 200 OK");
+      client.println("Content-Type: text/plain");
+      client.println();
+      client.println("WiFi credentials saved.");
+    }
+    client.stop();
+    Serial.println("Client disconnected");
+  }
 }
