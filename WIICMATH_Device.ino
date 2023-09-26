@@ -1,4 +1,6 @@
 #include "DHT.h" // DHT sensor library
+#include "WiFiS3.h" //WiFi module library
+#include "EEPROM.h"
 
 #define DHTTYPE DHT11
 
@@ -10,8 +12,8 @@ const uint8_t PIN_DHT = 2;
 
 unsigned long time_now = 0;
 
-bool firstSetup = false; //First time launching device?
-bool connected = true; //TBD: if connected to mr internet
+//bool firstSetup = true; //First time launching device?
+bool connected = false; //TBD: if connected to mr internet
 
 float dht_temperature;
 float dht_humidity;
@@ -27,23 +29,51 @@ int setting_minHum = 30;
 int setting_maxHum = 70;
 int setting_updateDelay = 1000;
 
+//Access point setup
+const char* apSSID = "WIICMATH";    // SSID of the access point
+const char* apPassword = "password";  // Password for the access point
+int status = WL_IDLE_STATUS;
+//WiFiServer server(80);
+WiFiServer server(80);
+const char* index_html = R"(
+<!DOCTYPE html>
+<html>
+<body>
+  <h2>WiFi Configuration</h2>
+  <form action="/configure" method="POST">
+    <label for="ssid">WiFi SSID:</label>
+    <input type="text" id="ssid" name="ssid"><br><br>
+    <label for="password">WiFi Password:</label>
+    <input type="password" id="password" name="password"><br><br>
+    <input type="submit" value="Submit">
+  </form>
+</body>
+</html>
+)";
+
+//EEPROM variables
+char ssid[32];      // WiFi SSID can be up to 32 characters
+char password[64];  // WiFi password can be up to 64 characters
+
 DHT dht(PIN_DHT, DHTTYPE);
 
 void setup() {
-  Serial.begin(9600);
-
   pinMode(PIN_RED,   OUTPUT);
   pinMode(PIN_GREEN, OUTPUT);
   pinMode(PIN_BLUE,  OUTPUT);
   pinMode(PIN_BUZZER, OUTPUT);
   pinMode(PIN_DHT, INPUT);
 
-  dht.begin();
+  Serial.begin(9600);
+  while (!Serial) {
+    ; // wait for serial port to connect. Needed for native USB port only
+  }
 
-  //If first time launching device, run setup
-  if(firstSetup) {
+  if(!connected) {
     modeSetup();
   }
+
+  dht.begin();
 }
 
 void loop() {
@@ -91,6 +121,36 @@ void modeConnecting() {
 
 void modeSetup() {
   //do some things if first launch
+  ledSignal(1, 0, 1, 0);
+
+  if (WiFi.status() == WL_NO_MODULE) {
+      Serial.println("Communication with WiFi module failed!");
+      // don't continue
+      while (true);
+    }
+
+  WiFi.beginAP(apSSID, apPassword);
+
+  Serial.println("Waiting 5 seconds to set up Access Point");
+  millisDelay(5000);
+
+  server.begin();
+
+  // you're connected now, so print out the status
+  printWiFiStatus();
+
+  while(!connected) {
+    WiFiClient client = server.available();
+    if (client) {
+      Serial.println("New client connected");
+      client.println("HTTP/1.1 200 OK");
+      client.println("Content-Type: text/html");
+      client.println();
+      client.println(index_html);
+      client.stop();
+      Serial.println("Client disconnected");
+    }
+  }
 }
 
 void modeAlarm() {
@@ -156,4 +216,20 @@ void setLimits(int minTemperature, int maxTemperature, int minHumidity, int maxH
 void millisDelay(long int delayTime){
   long int start_time = millis();
   while ( millis() - start_time < delayTime) ;
+}
+
+void printWiFiStatus() {
+  // print the SSID of the network you're attached to:
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+
+  // print your WiFi shield's IP address:
+  IPAddress ip = WiFi.localIP();
+  Serial.print("IP Address: ");
+  Serial.println(ip);
+
+  // print where to go in a browser:
+  Serial.print("To see this page in action, open a browser to http://");
+  Serial.println(ip);
+
 }
