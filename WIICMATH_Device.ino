@@ -343,7 +343,11 @@ void handleConfigure() {
 
       // Disable the access point and connect to the user-provided SSID
       WiFi.end();
-      connectToUserSSID(receivedSSID, receivedPassword);
+
+      String ssidDecoded = urlDecode(receivedSSID);
+      String passwordDecoded = urlDecode(receivedPassword);
+
+      connectToUserSSID(ssidDecoded, passwordDecoded);
     }
 
     client.stop(); // Close the client connection
@@ -359,14 +363,12 @@ void connectToUserSSID(const String& receivedSSID, const String& receivedPasswor
   * @param receivedSSID - SSID to connect to
   * @param receivedPassword - Password of SSID to connect to
   */
-  String ssidDecoded = urlDecode(receivedSSID);
-  String passwordDecoded = urlDecode(receivedPassword);
 
   Serial.print("Attempting to connect to user-provided SSID: ");
-  Serial.println(ssidDecoded);
+  Serial.println(receivedSSID);
 
   int attempts = 0;
-  WiFi.begin(ssidDecoded.c_str(), passwordDecoded.c_str());
+  WiFi.begin(receivedSSID.c_str(), receivedPassword.c_str());
 
   while (WiFi.status() != WL_CONNECTED && attempts < 30) {
     delay(1000);
