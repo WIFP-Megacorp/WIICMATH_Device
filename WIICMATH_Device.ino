@@ -38,6 +38,8 @@ WiFiServer server(80);
 char ssid[32];      // WiFi SSID can be up to 32 characters
 char password[64];  // WiFi password can be up to 64 characters
 
+
+
 void setup() {
   // Configure pin modes
   pinMode(PIN_RED,   OUTPUT);
@@ -55,8 +57,7 @@ void setup() {
   // Check if WiFi module works
   if (WiFi.status() == WL_NO_MODULE) {
     Serial.println("Communication with WiFi module failed!");
-    // Don't continue
-    while (true);
+    while (true); // Don't continue
   }
 
   // Check WiFi module firmware version
@@ -67,10 +68,18 @@ void setup() {
 
   // Start the setup procedure if the device isn't connected to the internet
   // (Potential future expansion for saving WiFi credentials to EEPROM)
-  if(WiFi.status() != WL_CONNECTED) {
-    modeSetup(); // if no connected to mr internet!
-  }
+  ledSignal(1, 0, 1, 0);
+  while(status != WL_CONNECTED) {
+    // Look for SSID in eeprom or storage
+    // If no SSID, or connection error, open web client to request SSID
+    // Connect to given SSID
 
+    //connectToSSID(ssid, pass);
+    // TODO: Connect using stored SSID & password first, if found
+    if (status != WL_CONNECTED) {
+      openWebInterface(); // if no connected to mr internet!
+    }
+  }
   // Start reading measurements from the DHT sensor
   dht.begin();
 }
@@ -82,10 +91,19 @@ void loop() {
   time_now = millis();
 
   // Process sensor data and device modes
-  readSensor();
+  //readSensor();
+  Serial.println("---");
+  if (isnan(dht_humidity) || isnan(dht_temperature)) {
+    modeAlarm();
+    Serial.println(F("Failed to read from DHT sensor!"));
+    return;
+  }
+  Serial.println("Temp: " + String(dht_temperature, 2) + "°C");
+  Serial.println("Humidity: " + String(dht_humidity, 1) + "%");
+
 
   if(WiFi.status() != WL_CONNECTED) {
-    modeConnecting(); // If not connected to the internet, attempt to connect
+    //modeConnecting(); // If not connected to the internet, attempt to connect
   } else if(dht_temperature < setting_minTemp || dht_temperature > setting_maxTemp  || dht_humidity < setting_minHum || dht_humidity > setting_maxHum) {
     modeAlarm(); // If sensor readings are out of spec, activate alarm mode
   } else {
@@ -109,6 +127,7 @@ void modeNormal() {
 /**
  * Currently unused
  */
+ /*
 void modeConnecting() {
   Serial.println("Attempting to connect to server");
   if(MODULE_RGBLED && setting_light) {
@@ -123,18 +142,7 @@ void modeConnecting() {
     millisDelay(500);
     noTone(PIN_BUZZER);
   }
-}
-
-/**
- * Gateway to WiFi setup mode.
- */
-void modeSetup() {
-  ledSignal(1, 0, 1, 0);
-
-  while(WiFi.status() != WL_CONNECTED) {
-    handleConfigure();
-  }
-}
+}*/
 
 /**
  * Device panic mode when something isn't right.
@@ -191,23 +199,6 @@ void setUpdateDelay(int ms) {
   setting_updateDelay = ms;
 }
 
-/**
- * Read sensor data from the DHT sensor and handle errors.
- */
-void readSensor() {
-  if (isnan(dht_humidity) || isnan(dht_temperature)) {
-    modeAlarm();
-    Serial.println("---");
-    Serial.println(F("Failed to read from DHT sensor!"));
-    
-    return;
-  }
-  //glenn var her
-  Serial.println("---");
-  Serial.println("Temp: " + String(dht_temperature, 2) + "°C");
-  Serial.println("Humidity: " + String(dht_humidity, 1) + "%");
-  
-}
 
 /**
  * Sets upper and lower thresholds for acceptable temperature and humidity readings.
@@ -217,7 +208,9 @@ void readSensor() {
  * @param minHumidity - lower relative humidity threshold in percent
  * @param maxHumidity - upper relative humidity threshold in percent
  */
-void setLimits(int minTemperature, int maxTemperature, int minHumidity, int maxHumidity) {
+void setThresholds(int minTemperature, int maxTemperature, int minHumidity, int maxHumidity) {
+  // GLenn
+  // TODO: Make sure given values don't exceed min/max possible values of dht11 sensor
   setting_minTemp = minTemperature;
   setting_maxTemp = maxTemperature;
   setting_minHum = minHumidity;
@@ -253,7 +246,10 @@ void printWiFiStatus() {
 /**
  * Handle the configuration of WiFi credentials via a web interface.
  */
-void handleConfigure() {
+void openWebInterface() {
+  // TODO: Get it to loop/repeat correctly
+  // Loop breaks when SSID/Password is wrong
+
   // Create an access point
   WiFi.beginAP(apSSID, apPassword);
 
@@ -299,8 +295,6 @@ void handleConfigure() {
         receivedPassword.trim();
       }
 
-      // Save data to Preferences
-      //saveCredentialsToPreferences(receivedSSID, receivedPassword);
       Serial.println("Received SSID: " + receivedSSID);
       Serial.println("Received password: " + receivedPassword);
 
@@ -316,7 +310,7 @@ void handleConfigure() {
       String ssidDecoded = urlDecode(receivedSSID);
       String passwordDecoded = urlDecode(receivedPassword);
 
-      connectToUserSSID(ssidDecoded, passwordDecoded);
+      connectToSSID(ssidDecoded, passwordDecoded);
     }
 
     client.stop(); // Close the client connection
@@ -331,27 +325,19 @@ void handleConfigure() {
  * @param receivedSSID - SSID to connect to
  * @param receivedPassword - Password of SSID to connect to
  */
-void connectToUserSSID(const String& receivedSSID, const String& receivedPassword) {
-  Serial.print("Attempting to connect to user-provided SSID: ");
+void connectToSSID(String& receivedSSID, String& receivedPassword) {
+  Serial.print("Attempting to connect to SSID: ");
   Serial.println(receivedSSID);
 
   int attempts = 0;
   WiFi.begin(receivedSSID.c_str(), receivedPassword.c_str());
 
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(1000);
-    Serial.println("Connecting...");
-    attempts++;
-  }
-
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("Connected to user-provided SSID");
+    Serial.println("Connected to SSID");
     printCurrentNet();
   } else {
-    Serial.println("Failed to connect to user-provided SSID.");
-    // You can add error handling here, such as retrying or other actions.
+    Serial.println("Failed to connect to SSID.");
     WiFi.end();
-    handleConfigure(); // Restart the configuration process
   }
 }
 
