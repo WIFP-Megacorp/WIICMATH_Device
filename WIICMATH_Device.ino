@@ -11,8 +11,6 @@ const uint8_t PIN_DHT = 2;    // Pin for the DHT sensor voltage
 
 unsigned long time_now = 0;
 
-bool connected = false; // is connected to mr internet?
-
 //DHT sensor variables and setup
 float dht_temperature;
 float dht_humidity;
@@ -54,10 +52,23 @@ void setup() {
     ; // wait for serial port to connect. Needed for native USB port only
   }
 
+  // Check if WiFi module works
+  if (WiFi.status() == WL_NO_MODULE) {
+    Serial.println("Communication with WiFi module failed!");
+    // Don't continue
+    while (true);
+  }
+
+  // Check WiFi module firmware version
+  String fv = WiFi.firmwareVersion();
+  if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
+    Serial.println("Please upgrade the firmware");
+  }
+
   // Start the setup procedure if the device isn't connected to the internet
   // (Potential future expansion for saving WiFi credentials to EEPROM)
-  if(!connected) {
-    modeSetup();
+  if(WiFi.status() != WL_CONNECTED) {
+    modeSetup(); // if no connected to mr internet!
   }
 
   // Start reading measurements from the DHT sensor
@@ -73,7 +84,7 @@ void loop() {
   // Process sensor data and device modes
   readSensor();
 
-  if(!connected) {
+  if(WiFi.status() != WL_CONNECTED) {
     modeConnecting(); // If not connected to the internet, attempt to connect
   } else if(dht_temperature < setting_minTemp || dht_temperature > setting_maxTemp  || dht_humidity < setting_minHum || dht_humidity > setting_maxHum) {
     modeAlarm(); // If sensor readings are out of spec, activate alarm mode
@@ -120,7 +131,7 @@ void modeConnecting() {
 void modeSetup() {
   ledSignal(1, 0, 1, 0);
 
-  while(!connected) {
+  while(WiFi.status() != WL_CONNECTED) {
     handleConfigure();
   }
 }
@@ -243,12 +254,6 @@ void printWiFiStatus() {
  * Handle the configuration of WiFi credentials via a web interface.
  */
 void handleConfigure() {
-  if (WiFi.status() == WL_NO_MODULE) {
-    Serial.println("Communication with WiFi module failed!");
-    // Don't continue
-    while (true);
-  }
-
   // Create an access point
   WiFi.beginAP(apSSID, apPassword);
 
@@ -342,7 +347,6 @@ void connectToUserSSID(const String& receivedSSID, const String& receivedPasswor
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("Connected to user-provided SSID");
     printCurrentNet();
-    connected = true;
   } else {
     Serial.println("Failed to connect to user-provided SSID.");
     // You can add error handling here, such as retrying or other actions.
