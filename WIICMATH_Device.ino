@@ -1,33 +1,33 @@
-#include "DHT.h" // DHT sensor library
-#include "WiFiS3.h" //WiFi module library
-//#include "EEPROM.h"
+#include "DHT.h" // Include the DHT sensor library
+#include "WiFiS3.h" // Include the WiFi module library
+//#include "EEPROM.h" // Uncomment this line if you plan to use EEPROM
+#include "webpage.h" // Include the webpage header file
 
-const uint8_t PIN_BUZZER  = 8;
-const uint8_t PIN_RED   = 11;
-const uint8_t PIN_GREEN = 12;
-const uint8_t PIN_BLUE  = 13;
-const uint8_t PIN_DHT = 2;
+const uint8_t PIN_BUZZER  = 8; // Pin for the buzzer module voltage
+const uint8_t PIN_RED   = 11; // Pin for the "red" LED voltage
+const uint8_t PIN_GREEN = 12; // Pin for the "green"LED voltage
+const uint8_t PIN_BLUE  = 13; // Pin for the "blue" LED voltage
+const uint8_t PIN_DHT = 2;    // Pin for the DHT sensor voltage
 
 unsigned long time_now = 0;
 
-//bool firstSetup = true; //First time launching device?
-bool connected = false; //TBD: if connected to mr internet
+bool connected = false; // is connected to mr internet?
 
 //DHT sensor variables and setup
 float dht_temperature;
 float dht_humidity;
 DHT dht(PIN_DHT, DHT11);
 
-//some settings
-bool MODULE_BUZZER = true; //Is the Buzzer module present?
-bool MODULE_RGBLED = true; //Is the RGB LED module present?
-bool setting_sound = false; //If true, buzzer makes sound
-bool setting_light = true; //If true, RGB LED is used for status
-int setting_minTemp = 10;
-int setting_maxTemp = 27;
-int setting_minHum = 30;
-int setting_maxHum = 70;
-int setting_updateDelay = 1000;
+// Default module and settings flags
+bool MODULE_BUZZER = true; // Indicates if the Buzzer module is present
+bool MODULE_RGBLED = true; // Indicates if the RGB LED module is present
+bool setting_sound = false; // If true, the buzzer makes sound
+bool setting_light = true; // If true, the RGB LED is used for status
+int setting_minTemp = 10; // Minimum acceptable temperature
+int setting_maxTemp = 27; // Maximum acceptable temperature
+int setting_minHum = 30; // Minimum acceptable humidity
+int setting_maxHum = 70; // Maximum acceptable humidity
+int setting_updateDelay = 1000; // Delay between main loop executions
 
 //Access point setup
 const char* apSSID = "WIICMATH";    // SSID of the access point
@@ -35,109 +35,59 @@ const char* apPassword = "password";  // Password for the access point
 int status = WL_IDLE_STATUS;
 
 WiFiServer server(80);
-const char* index_html = R"(
-<!DOCTYPE html>
-<html>
-<head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body {
-            background-color: aqua;
-            font-family: sans-serif;
-        }
-    
-        form {
-            width:50%;
-            margin: auto;
-        }
-        
-        input {
-            width:100%;
-            margin:auto;
-            font-size:20px;
-            min-height:5vh;
-        }
-        
-        h1 {
-            text-align: center;
-        }
-
-        @media screen and (max-width: 480px) {
-            form {
-                width:90%;
-            }
-            input {
-                width:100%;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>WIICMATH<br>WiFi Configuration</h1>
-        <form action="/configure" method="POST">
-            <label for="ssid">WiFi SSID:</label><br>
-            <input type="text" id="ssid" name="ssid"><br><br>
-            <label for="password">WiFi Password:</label><br>
-            <input type="password" id="password" name="password"><br><br>
-            <input type="submit" value="Submit">
-        </form>
-    </div>
-</body>
-</html>
-)";
 
 //EEPROM & WiFi connection variables (EEPROM not currently used)
 char ssid[32];      // WiFi SSID can be up to 32 characters
 char password[64];  // WiFi password can be up to 64 characters
 
 void setup() {
-  //Deciding what pins are output and input
+  // Configure pin modes
   pinMode(PIN_RED,   OUTPUT);
   pinMode(PIN_GREEN, OUTPUT);
   pinMode(PIN_BLUE,  OUTPUT);
   pinMode(PIN_BUZZER, OUTPUT);
   pinMode(PIN_DHT, INPUT);
 
-  //Starting to read serial through USB, for debugging purposes
+  // Initialize serial communication for debugging
   Serial.begin(9600);
   while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
   }
 
-  //Starts the setup procedure if device isn't connected to internet
-  //Is here for potential future expansion of saving WiFi credentials to EEPROM
+  // Start the setup procedure if the device isn't connected to the internet
+  // (Potential future expansion for saving WiFi credentials to EEPROM)
   if(!connected) {
     modeSetup();
   }
 
-  //Starts to read measurements from the DHT-sensor
+  // Start reading measurements from the DHT sensor
   dht.begin();
 }
 
 void loop() {
+  // Read DHT sensor values & set current time
   dht_humidity = dht.readHumidity();
   dht_temperature = dht.readTemperature(); 
   time_now = millis();
 
+  // Process sensor data and device modes
   readSensor();
 
-  if(!connected) { //If not connected to internet
-    modeConnecting();
-  } else if(dht_temperature < setting_minTemp || dht_temperature > setting_maxTemp  || dht_humidity < setting_minHum || dht_humidity > setting_maxHum) { //If temp & humidity not within spec
-    modeAlarm();
+  if(!connected) {
+    modeConnecting(); // If not connected to the internet, attempt to connect
+  } else if(dht_temperature < setting_minTemp || dht_temperature > setting_maxTemp  || dht_humidity < setting_minHum || dht_humidity > setting_maxHum) {
+    modeAlarm(); // If sensor readings are out of spec, activate alarm mode
   } else {
-    modeNormal();
+    modeNormal(); // Device operates normally when all conditions are met
   }
 
-  millisDelay(setting_updateDelay);
+  millisDelay(setting_updateDelay); // Delay before next loop execution
 }
 
-//Modes
+/**
+ * Device mode when everything is normal.
+ */
 void modeNormal() {
-  /*
-  * Device mode when everything is just fine
-  */
   Serial.println("Normal operating");
   if(MODULE_RGBLED && setting_light) {
     ledSignal(0, 1, 0, 0);
@@ -145,6 +95,9 @@ void modeNormal() {
   }
 }
 
+/**
+ * Currently unused
+ */
 void modeConnecting() {
   Serial.println("Attempting to connect to server");
   if(MODULE_RGBLED && setting_light) {
@@ -161,10 +114,10 @@ void modeConnecting() {
   }
 }
 
+/**
+ * Gateway to WiFi setup mode.
+ */
 void modeSetup() {
-  /*
-  * Gateway to WiFi-setup
-  */
   ledSignal(1, 0, 1, 0);
 
   while(!connected) {
@@ -172,10 +125,10 @@ void modeSetup() {
   }
 }
 
+/**
+ * Device panic mode when something isn't right.
+ */
 void modeAlarm() {
-  /*
-  * Device panic mode, when something isn't right
-  */
   Serial.println("It's panic time");
   if(MODULE_RGBLED && setting_light) {
     ledSignal(1, 0, 0, 500);
@@ -189,15 +142,15 @@ void modeAlarm() {
   }
 }
 
+/**
+ * Turns on, or blinks, the RGB LED.
+ *
+ * @param r - Color value of red
+ * @param g - Color value of green
+ * @param b - Color value of blue
+ * @param delayMs - How long LED should stay on and off
+ */
 void ledSignal(bool r, bool g, bool b, int delayMs) {
-  /*
-  * Turns on, or blinks, the RGB LED
-  *
-  * @param r - Color value of red
-  * @param g - Color value of green
-  * @param b - Color value of blue
-  * @param delayMs - How long LED should stay on and off
-  */
   turnOffAllLed();
   digitalWrite(11, r);
   digitalWrite(12, g);
@@ -209,24 +162,27 @@ void ledSignal(bool r, bool g, bool b, int delayMs) {
   }
 }
 
+/**
+ * Sets all LED pins to LOW (off).
+ */
 void turnOffAllLed() {
-  /*
-  * Sets all LED pins to LOW (off)
-  */
   digitalWrite(11, 0);
   digitalWrite(12, 0);
   digitalWrite(13, 0);
 }
 
+/**
+ * Changes the delay of each main loop execution.
+ *
+ * @param ms - Delay in milliseconds
+ */
 void setUpdateDelay(int ms) {
-  /*
-  * Changes the delay of each main loop execution
-  *
-  * @param ms - Delay in milliseconds
-  */
   setting_updateDelay = ms;
 }
 
+/**
+ * Read sensor data from the DHT sensor and handle errors.
+ */
 void readSensor() {
   if (isnan(dht_humidity) || isnan(dht_temperature)) {
     modeAlarm();
@@ -242,26 +198,34 @@ void readSensor() {
   
 }
 
+/**
+ * Sets upper and lower thresholds for acceptable temperature and humidity readings.
+ *
+ * @param minTemperature - lower temperature threshold in degrees Celsius
+ * @param maxTemperature - upper temperature threshold in degrees Celsius
+ * @param minHumidity - lower relative humidity threshold in percent
+ * @param maxHumidity - upper relative humidity threshold in percent
+ */
 void setLimits(int minTemperature, int maxTemperature, int minHumidity, int maxHumidity) {
-  /*
-  * Sets upper and lower thresholds for acceptable temperature and humidity readings
-  *
-  * @param minTemperature - lower temperature threshold in degrees celsius 
-  * @param maxTemperature - upper temperature threshold in degrees celsius 
-  * @param minHumidity - lower relative humidity threshold in percent
-  * @param maxHumidity - upper relative humidity threshold in percent
-  */
   setting_minTemp = minTemperature;
   setting_maxTemp = maxTemperature;
   setting_minHum = minHumidity;
   setting_maxHum = maxHumidity;
 }
 
+/**
+ * Delay for a specified number of milliseconds using millis().
+ *
+ * @param delayTime - Delay time in milliseconds
+ */
 void millisDelay(long int delayTime){
   long int start_time = millis();
   while ( millis() - start_time < delayTime) ;
 }
 
+/**
+ * Print WiFi connection status and IP address.
+ */
 void printWiFiStatus() {
   // print the SSID of the network you're attached to:
   Serial.print("SSID: ");
@@ -275,6 +239,9 @@ void printWiFiStatus() {
   Serial.println("");
 }
 
+/**
+ * Handle the configuration of WiFi credentials via a web interface.
+ */
 void handleConfigure() {
   if (WiFi.status() == WL_NO_MODULE) {
     Serial.println("Communication with WiFi module failed!");
@@ -352,15 +319,14 @@ void handleConfigure() {
   }
 }
 
+/**
+ * Connect to a 2G network using an SSID and password
+ *
+ *
+ * @param receivedSSID - SSID to connect to
+ * @param receivedPassword - Password of SSID to connect to
+ */
 void connectToUserSSID(const String& receivedSSID, const String& receivedPassword) {
-  /*
-  * Connect to a 2G network using an SSID and password
-  *
-  *
-  * @param receivedSSID - SSID to connect to
-  * @param receivedPassword - Password of SSID to connect to
-  */
-
   Serial.print("Attempting to connect to user-provided SSID: ");
   Serial.println(receivedSSID);
 
@@ -385,21 +351,21 @@ void connectToUserSSID(const String& receivedSSID, const String& receivedPasswor
   }
 }
 
+ /*
+ * Prints the current SSID the device is connected to
+ */
 void printCurrentNet() {
-  /*
-  * Prints the current SSID the device is connected to
-  */
   Serial.print("SSID: ");
   Serial.println(WiFi.SSID());
 }
 
+/**
+ * Used to remove ASCII encoding in URLs or data received from HTML forms
+ *
+ * @param input - URL to decode
+ * @return - decoded URL
+ */
 String urlDecode(const String& input) {
-  /*
-  * Used to remove ASCII encoding in URLs or data received from HTML forms
-  *
-  * @param input - URL to decode
-  * @return - decoded URL
-  */
   String output = input;
   output.replace("+", " ");
   output.replace("%20", " ");
