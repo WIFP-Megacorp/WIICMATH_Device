@@ -2,8 +2,6 @@
 #include "WiFiS3.h" //WiFi module library
 //#include "EEPROM.h"
 
-#define DHTTYPE DHT11
-
 const uint8_t PIN_BUZZER  = 8;
 const uint8_t PIN_RED   = 11;
 const uint8_t PIN_GREEN = 12;
@@ -15,8 +13,10 @@ unsigned long time_now = 0;
 //bool firstSetup = true; //First time launching device?
 bool connected = false; //TBD: if connected to mr internet
 
+//DHT sensor variables and setup
 float dht_temperature;
 float dht_humidity;
+DHT dht(PIN_DHT, DHT11);
 
 //some settings
 bool MODULE_BUZZER = true; //Is the Buzzer module present?
@@ -87,28 +87,31 @@ const char* index_html = R"(
 </html>
 )";
 
-//EEPROM & WiFi connection variables
+//EEPROM & WiFi connection variables (EEPROM not currently used)
 char ssid[32];      // WiFi SSID can be up to 32 characters
 char password[64];  // WiFi password can be up to 64 characters
 
-DHT dht(PIN_DHT, DHTTYPE);
-
 void setup() {
+  //Deciding what pins are output and input
   pinMode(PIN_RED,   OUTPUT);
   pinMode(PIN_GREEN, OUTPUT);
   pinMode(PIN_BLUE,  OUTPUT);
   pinMode(PIN_BUZZER, OUTPUT);
   pinMode(PIN_DHT, INPUT);
 
+  //Starting to read serial through USB, for debugging purposes
   Serial.begin(9600);
   while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
   }
 
+  //Starts the setup procedure if device isn't connected to internet
+  //Is here for potential future expansion of saving WiFi credentials to EEPROM
   if(!connected) {
     modeSetup();
   }
 
+  //Starts to read measurements from the DHT-sensor
   dht.begin();
 }
 
@@ -132,6 +135,9 @@ void loop() {
 
 //Modes
 void modeNormal() {
+  /*
+  * Device mode when everything is just fine
+  */
   Serial.println("Normal operating");
   if(MODULE_RGBLED && setting_light) {
     ledSignal(0, 1, 0, 0);
@@ -156,7 +162,9 @@ void modeConnecting() {
 }
 
 void modeSetup() {
-  //do some things if first launch
+  /*
+  * Gateway to WiFi-setup
+  */
   ledSignal(1, 0, 1, 0);
 
   while(!connected) {
@@ -165,6 +173,9 @@ void modeSetup() {
 }
 
 void modeAlarm() {
+  /*
+  * Device panic mode, when something isn't right
+  */
   Serial.println("It's panic time");
   if(MODULE_RGBLED && setting_light) {
     ledSignal(1, 0, 0, 500);
@@ -178,8 +189,15 @@ void modeAlarm() {
   }
 }
 
-//LED Handling
 void ledSignal(bool r, bool g, bool b, int delayMs) {
+  /*
+  * Turns on, or blinks, the RGB LED
+  *
+  * @param r - Color value of red
+  * @param g - Color value of green
+  * @param b - Color value of blue
+  * @param delayMs - How long LED should stay on and off
+  */
   turnOffAllLed();
   digitalWrite(11, r);
   digitalWrite(12, g);
@@ -192,13 +210,20 @@ void ledSignal(bool r, bool g, bool b, int delayMs) {
 }
 
 void turnOffAllLed() {
+  /*
+  * Sets all LED pins to LOW (off)
+  */
   digitalWrite(11, 0);
   digitalWrite(12, 0);
   digitalWrite(13, 0);
 }
 
-//Other
 void setUpdateDelay(int ms) {
+  /*
+  * Changes the delay of each main loop execution
+  *
+  * @param ms - Delay in milliseconds
+  */
   setting_updateDelay = ms;
 }
 
@@ -218,6 +243,14 @@ void readSensor() {
 }
 
 void setLimits(int minTemperature, int maxTemperature, int minHumidity, int maxHumidity) {
+  /*
+  * Sets upper and lower thresholds for acceptable temperature and humidity readings
+  *
+  * @param minTemperature - lower temperature threshold in degrees celsius 
+  * @param maxTemperature - upper temperature threshold in degrees celsius 
+  * @param minHumidity - lower relative humidity threshold in percent
+  * @param maxHumidity - upper relative humidity threshold in percent
+  */
   setting_minTemp = minTemperature;
   setting_maxTemp = maxTemperature;
   setting_minHum = minHumidity;
@@ -319,6 +352,13 @@ void handleConfigure() {
 }
 
 void connectToUserSSID(const String& receivedSSID, const String& receivedPassword) {
+  /*
+  * Connect to a 2G network using an SSID and password
+  *
+  *
+  * @param receivedSSID - SSID to connect to
+  * @param receivedPassword - Password of SSID to connect to
+  */
   String ssidDecoded = urlDecode(receivedSSID);
   String passwordDecoded = urlDecode(receivedPassword);
 
@@ -337,7 +377,6 @@ void connectToUserSSID(const String& receivedSSID, const String& receivedPasswor
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("Connected to user-provided SSID");
     printCurrentNet();
-    printWifiData();
     connected = true;
   } else {
     Serial.println("Failed to connect to user-provided SSID.");
@@ -348,58 +387,23 @@ void connectToUserSSID(const String& receivedSSID, const String& receivedPasswor
 }
 
 void printCurrentNet() {
-  // print the SSID of the network you're attached to:
+  /*
+  * Prints the current SSID the device is connected to
+  */
   Serial.print("SSID: ");
   Serial.println(WiFi.SSID());
-
-  // print the MAC address of the router you're attached to:
-  byte bssid[6];
-  WiFi.BSSID(bssid);
-  Serial.print("BSSID: ");
-  printMacAddress(bssid);
-
-  // print the received signal strength:
-  long rssi = WiFi.RSSI();
-  Serial.print("signal strength (RSSI):");
-  Serial.println(rssi);
-
-  // print the encryption type:
-  byte encryption = WiFi.encryptionType();
-  Serial.print("Encryption Type:");
-  Serial.println(encryption, HEX);
-  Serial.println();
-}
-
-void printWifiData() {
-  // print your board's IP address:
-  IPAddress ip = WiFi.localIP();
-  Serial.print("IP Address: ");
-  
-  Serial.println(ip);
-
-  // print your MAC address:
-  byte mac[6];
-  WiFi.macAddress(mac);
-  Serial.print("MAC address: ");
-  printMacAddress(mac);
-}
-
-void printMacAddress(byte mac[]) {
-  for (int i = 5; i >= 0; i--) {
-    if (mac[i] < 16) {
-      Serial.print("0");
-    }
-    Serial.print(mac[i], HEX);
-    if (i > 0) {
-      Serial.print(":");
-    }
-  }
-  Serial.println();
 }
 
 String urlDecode(const String& input) {
+  /*
+  * Used to remove ASCII encoding in URLs or data received from HTML forms
+  *
+  * @param input - URL to decode
+  * @return - decoded URL
+  */
   String output = input;
   output.replace("+", " ");
+  output.replace("%20", " ");
   output.replace("%21", "!");
   output.replace("%23", "#");
   output.replace("%24", "$");
