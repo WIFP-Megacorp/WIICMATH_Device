@@ -118,8 +118,20 @@ void modeNormal() {
  */
 void modeConnecting() {
   // (Potential future expansion for saving WiFi credentials to EEPROM)
-  ledSignal(1, 0, 1, 0);
   while(status != WL_CONNECTED) {
+    if(MODULE_RGBLED && setting_light) {
+      ledSignal(0, 0, 1, 1000);
+    }
+    if(MODULE_BUZZER && setting_sound) {
+      //Todo: firstLaunch variable, if firstLaunch don't BUZZ!!!!!!!!!!
+      tone(PIN_BUZZER, 523, 250);
+      millisDelay(250);
+      tone(PIN_BUZZER, 1047, 250);
+      millisDelay(250);
+      tone(PIN_BUZZER, 2093, 250);
+      millisDelay(500);
+      noTone(PIN_BUZZER);
+    }
     // Look for SSID in eeprom or storage
     // If no SSID, or connection error, open web client to request SSID
     // Connect to given SSID
@@ -133,25 +145,6 @@ void modeConnecting() {
   }
   //after out of loop, store newest credentials to eeprom
   //eg fun named eepromWriteWifiSettings()
-
-
-
-  //To be looked over and harvested later:
-  /*
-  Serial.println("Attempting to connect to server");
-  if(MODULE_RGBLED && setting_light) {
-    ledSignal(0, 0, 1, 1000);
-  }
-  if(MODULE_BUZZER && setting_sound) {
-    tone(PIN_BUZZER, 523, 250);
-    millisDelay(250);
-    tone(PIN_BUZZER, 1047, 250);
-    millisDelay(250);
-    tone(PIN_BUZZER, 2093, 250);
-    millisDelay(500);
-    noTone(PIN_BUZZER);
-  }
-  */
 }
 
 /**
