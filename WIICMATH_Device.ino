@@ -67,19 +67,8 @@ void setup() {
   }
 
   // Start the setup procedure if the device isn't connected to the internet
-  // (Potential future expansion for saving WiFi credentials to EEPROM)
-  ledSignal(1, 0, 1, 0);
-  while(status != WL_CONNECTED) {
-    // Look for SSID in eeprom or storage
-    // If no SSID, or connection error, open web client to request SSID
-    // Connect to given SSID
+  modeConnecting();
 
-    //connectToSSID(ssid, pass);
-    // TODO: Connect using stored SSID & password first, if found
-    if (status != WL_CONNECTED) {
-      openWebInterface(); // if no connected to mr internet!
-    }
-  }
   // Start reading measurements from the DHT sensor
   dht.begin();
 }
@@ -103,7 +92,7 @@ void loop() {
 
 
   if(WiFi.status() != WL_CONNECTED) {
-    //modeConnecting(); // If not connected to the internet, attempt to connect
+    modeConnecting(); // If lost connection to the internet, attempt to connect
   } else if(dht_temperature < setting_minTemp || dht_temperature > setting_maxTemp  || dht_humidity < setting_minHum || dht_humidity > setting_maxHum) {
     modeAlarm(); // If sensor readings are out of spec, activate alarm mode
   } else {
@@ -125,10 +114,30 @@ void modeNormal() {
 }
 
 /**
- * Currently unused
+ * Handling logic flow when device isn't connected to the Internet
  */
- /*
 void modeConnecting() {
+  // (Potential future expansion for saving WiFi credentials to EEPROM)
+  ledSignal(1, 0, 1, 0);
+  while(status != WL_CONNECTED) {
+    // Look for SSID in eeprom or storage
+    // If no SSID, or connection error, open web client to request SSID
+    // Connect to given SSID
+    // eg func named eepromReadWifiSettings() then call connectToSSID()
+
+    //connectToSSID(ssid, pass);
+    // TODO: Connect using stored SSID & password first, if found
+    if (status != WL_CONNECTED) {
+      openWebInterface(); // if no connected to mr internet!
+    }
+  }
+  //after out of loop, store newest credentials to eeprom
+  //eg fun named eepromWriteWifiSettings()
+
+
+
+  //To be looked over and harvested later:
+  /*
   Serial.println("Attempting to connect to server");
   if(MODULE_RGBLED && setting_light) {
     ledSignal(0, 0, 1, 1000);
@@ -142,7 +151,8 @@ void modeConnecting() {
     millisDelay(500);
     noTone(PIN_BUZZER);
   }
-}*/
+  */
+}
 
 /**
  * Device panic mode when something isn't right.
@@ -293,6 +303,8 @@ void openWebInterface() {
         receivedPassword = body.substring(passwordIndex + 9);
         receivedSSID.trim();
         receivedPassword.trim();
+        receivedSSID = urlDecode(receivedSSID);
+        receivedPassword = urlDecode(receivedPassword);
       }
 
       Serial.println("Received SSID: " + receivedSSID);
@@ -306,11 +318,7 @@ void openWebInterface() {
 
       // Disable the access point and connect to the user-provided SSID
       WiFi.end();
-
-      String ssidDecoded = urlDecode(receivedSSID);
-      String passwordDecoded = urlDecode(receivedPassword);
-
-      connectToSSID(ssidDecoded, passwordDecoded);
+      connectToSSID(receivedSSID, receivedPassword);
     }
 
     client.stop(); // Close the client connection
@@ -325,14 +333,15 @@ void openWebInterface() {
  * @param receivedSSID - SSID to connect to
  * @param receivedPassword - Password of SSID to connect to
  */
+// Todo: convert parameter to char instead of String
 void connectToSSID(String& receivedSSID, String& receivedPassword) {
   Serial.print("Attempting to connect to SSID: ");
   Serial.println(receivedSSID);
 
   int attempts = 0;
-  WiFi.begin(receivedSSID.c_str(), receivedPassword.c_str());
+  status = WiFi.begin(receivedSSID.c_str(), receivedPassword.c_str());
 
-  if (WiFi.status() == WL_CONNECTED) {
+  if (status == WL_CONNECTED) {
     Serial.println("Connected to SSID");
     printCurrentNet();
   } else {
