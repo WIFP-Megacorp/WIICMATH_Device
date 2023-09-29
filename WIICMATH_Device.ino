@@ -37,7 +37,8 @@ WiFiServer server(80);
 //EEPROM & WiFi connection variables (EEPROM not currently used)
 char ssid[32];      // WiFi SSID can be up to 32 characters
 char password[64];  // WiFi password can be up to 64 characters
-
+String receivedSSID = "";
+String receivedPassword = "";
 
 
 void setup() {
@@ -80,7 +81,6 @@ void loop() {
   time_now = millis();
 
   // Process sensor data and device modes
-  //readSensor();
   Serial.println("---");
   if (isnan(dht_humidity) || isnan(dht_temperature)) {
     modeAlarm();
@@ -92,8 +92,13 @@ void loop() {
 
 
   if(WiFi.status() != WL_CONNECTED) {
-    modeConnecting(); // If lost connection to the internet, attempt to connect
-  } else if(dht_temperature < setting_minTemp || dht_temperature > setting_maxTemp  || dht_humidity < setting_minHum || dht_humidity > setting_maxHum) {
+    // If lost connection to the internet, attempt to connect
+    // Arduino takes a few seconds to recognice a disconnect 
+    modeConnecting(); 
+  } else if(dht_temperature < setting_minTemp || 
+            dht_temperature > setting_maxTemp  || 
+            dht_humidity < setting_minHum || 
+            dht_humidity > setting_maxHum) {
     modeAlarm(); // If sensor readings are out of spec, activate alarm mode
   } else {
     modeNormal(); // Device operates normally when all conditions are met
@@ -117,30 +122,60 @@ void modeNormal() {
  * Handling logic flow when device isn't connected to the Internet
  */
 void modeConnecting() {
+  // if no connected to mr internet!
   // (Potential future expansion for saving WiFi credentials to EEPROM)
-  while(status != WL_CONNECTED) {
-    if(MODULE_RGBLED && setting_light) {
-      ledSignal(0, 0, 1, 1000);
-    }
-    if(MODULE_BUZZER && setting_sound) {
-      //Todo: firstLaunch variable, if firstLaunch don't BUZZ!!!!!!!!!!
-      tone(PIN_BUZZER, 523, 250);
-      millisDelay(250);
-      tone(PIN_BUZZER, 1047, 250);
-      millisDelay(250);
-      tone(PIN_BUZZER, 2093, 250);
-      millisDelay(500);
-      noTone(PIN_BUZZER);
-    }
-    // Look for SSID in eeprom or storage
-    // If no SSID, or connection error, open web client to request SSID
-    // Connect to given SSID
-    // eg func named eepromReadWifiSettings() then call connectToSSID()
+  
+  status = WL_IDLE_STATUS;
+  int attempt = 0;
+  
+  // TODO: Connect using stored SSID & password first, if found  
+  // eg func named eepromReadWifiSettings() then call connectToSSID()    
+  while(status != WL_CONNECTED && attempt < 3) {
+    status = connectToSSID(receivedSSID, receivedPassword);
+    attempt++;
+  }
 
-    //connectToSSID(ssid, pass);
-    // TODO: Connect using stored SSID & password first, if found
-    if (status != WL_CONNECTED) {
-      openWebInterface(); // if no connected to mr internet!
+  /* Glenn - 28.09.2023
+    Suggestion, add manual option/button to enter setup through access point.
+    That way, in case of large blackout, the device will reconnect on its own using stored ssid.
+    In the case that a new network is needed, the manual setup can be initiated.
+  */
+
+  while(status != WL_CONNECTED) {
+    // If no SSID, or connection error, open web client to request SSID
+    Serial.println("Failed to connect. Requesting new SSID and password");
+    Serial.println();
+    WiFi.end(); // to stop wifi when switching between ap and wifi
+
+    openWebInterface(); // Setup access point
+    bool got_ssid = false;  // Variable for if an ssid is found
+    
+    while (!got_ssid) {
+      got_ssid = loopWebInterface();
+    
+      if(MODULE_RGBLED && setting_light) {
+        ledSignal(0, 0, 1, 1000);
+      }
+      if(MODULE_BUZZER && setting_sound) {
+        //Todo: firstLaunch variable, if firstLaunch don't BUZZ!!!!!!!!!!
+        tone(PIN_BUZZER, 523, 250);
+        millisDelay(250);
+        tone(PIN_BUZZER, 1047, 250);
+        millisDelay(250);
+        tone(PIN_BUZZER, 2093, 250);
+        millisDelay(500);
+        noTone(PIN_BUZZER);
+      }
+    }
+    Serial.println("Got SSID. Attemting to connect to it");
+    WiFi.end();
+
+    // Connect to given SSID    
+    attempt = 0;
+    
+    while(status != WL_CONNECTED && attempt < 3) {
+      status = connectToSSID(receivedSSID, receivedPassword);
+      attempt++;
     }
   }
   //after out of loop, store newest credentials to eeprom
@@ -199,7 +234,8 @@ void turnOffAllLed() {
  * @param ms - Delay in milliseconds
  */
 void setUpdateDelay(int ms) {
-  setting_updateDelay = ms;
+  if (ms >= 1000) setting_updateDelay = ms;
+  else setting_updateDelay = 1000;
 }
 
 
@@ -212,12 +248,19 @@ void setUpdateDelay(int ms) {
  * @param maxHumidity - upper relative humidity threshold in percent
  */
 void setThresholds(int minTemperature, int maxTemperature, int minHumidity, int maxHumidity) {
-  // GLenn
-  // TODO: Make sure given values don't exceed min/max possible values of dht11 sensor
-  setting_minTemp = minTemperature;
-  setting_maxTemp = maxTemperature;
-  setting_minHum = minHumidity;
-  setting_maxHum = maxHumidity;
+  // If the given value is below or higher than the upper and lower limits of the dht11 sensor, the value is set to the sensor limit.
+  
+  if (minTemperature >= 0) setting_minTemp = minTemperature;
+  else setting_minTemp = 0;
+
+  if (maxTemperature <= 50) setting_maxTemp = maxTemperature;
+  else setting_maxTemp = 50;
+  
+  if (minHumidity >= 20) setting_minHum = minHumidity;
+  else setting_minHum = 20;
+  
+  if (maxHumidity <= 80) setting_maxHum = maxHumidity;
+  else setting_maxHum = 80;
 }
 
 /**
@@ -250,22 +293,130 @@ void printWiFiStatus() {
  * Handle the configuration of WiFi credentials via a web interface.
  */
 void openWebInterface() {
-  // TODO: Get it to loop/repeat correctly
-  // Loop breaks when SSID/Password is wrong
-
   // Create an access point
-  WiFi.beginAP(apSSID, apPassword);
-
+  status = WiFi.beginAP(apSSID, apPassword);
+  if (status != WL_AP_LISTENING) {
+    Serial.println("Creating access point failed");
+    // don't continue
+    while (true);
+  }
   Serial.println("Waiting for a client to configure...");
   server.begin();
 
   // You're connected now, so print out the status
   printWiFiStatus();
+  // End of setup of access point
+}
+/**
+ * Listens to access point and 
+ *
+ * @return - If an ssid was recieved
+ */
+bool loopWebInterface() {
+  bool var = false;
+
+  // compare the previous status to the current status
+  if (status != WiFi.status()) {
+    // it has changed update the variable
+    status = WiFi.status();
+
+    if (status == WL_AP_CONNECTED) {
+      // a device has connected to the AP
+      Serial.println("Device connected to AP");
+    } else {
+      // a device has disconnected from the AP, and we are back in listening mode
+      Serial.println("Device disconnected from AP");
+    }
+  }
 
   WiFiClient client = server.available();
-  if (!client) {
-    return;
+  
+  // Connect to client
+  if (!client) { return var; } //If no client was found
+
+  Serial.println("New client connected");
+  String currentLine = "";
+  while (client.connected()) {
+    delayMicroseconds(10);    // To give time to connect
+    if (client.available()) { // if there's bytes to read from the client,
+      char c = client.read(); // read a byte, then
+      //Serial.write(c);        // print it out to the serial monitor
+      if (c == '\n') {        // if the byte is a newline character
+
+        // if the current line is blank, you got two newline characters in a row.
+        // that's the end of the client HTTP request, so send a response:
+        if (currentLine.length() == 0) {
+          // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
+          // and a content-type so the client knows what's coming, then a blank line:
+          client.println("HTTP/1.1 200 OK");
+          client.println("Content-Type: text/html");
+          client.println();
+          client.println(index_html);
+          // The HTTP response ends with another blank line:
+          client.println();
+          // break out of the while loop:
+          break;
+        }
+        else {      // if you got a newline, then clear currentLine:
+          currentLine = "";
+        }
+      }
+      //String request = client.readStringUntil('\r');
+      else if (c != '\r') {    // if you got anything else but a carriage return character,
+        currentLine += c;      // add it to the end of the currentLine
+      }
+      
+      if (currentLine.endsWith("POST /configure")) {
+        // Read the POST data from the client
+        // Extract SSID and password from the POST data
+        currentLine = "";
+        while (client.available()) {
+          char c = client.read();
+          currentLine += c;
+        }
+        
+        //String receivedSSID = "";
+        //String receivedPassword = "";
+
+        int ssidIndex = currentLine.indexOf("ssid=");
+        int passwordIndex = currentLine.indexOf("password=");
+        
+        if (ssidIndex != -1 && passwordIndex != -1) {
+          receivedSSID = currentLine.substring(ssidIndex + 5, currentLine.indexOf('&', ssidIndex));
+          receivedPassword = currentLine.substring(passwordIndex + 9);
+          receivedSSID.trim();
+          receivedPassword.trim();
+          receivedSSID = urlDecode(receivedSSID);
+          receivedPassword = urlDecode(receivedPassword);
+        }
+        Serial.println("Received SSID: " + receivedSSID);
+        Serial.println("Received password: " + receivedPassword);
+        
+        // Send a response back to the client
+        client.println("HTTP/1.1 200 OK");
+        client.println("Content-Type: text/plain");
+        client.println();
+        client.println("WiFi credentials saved.");
+
+        
+        var = true; // SSID has been given, so true
+        break;      // Break free from the loop
+      }      
+    }
   }
+  // close the connection:
+  client.stop();
+  Serial.println("client disconnected");
+  return var;
+}
+// End of client connection
+
+/*  
+void openWebInterface() {
+  // TODO: Get it to loop/repeat correctly
+  // Loop breaks when SSID/Password is wrong
+  WiFiClient client = server.available();
+  if (!client) { return; }
 
   if (client.connected()) {
     Serial.println("New client connected");
@@ -317,7 +468,7 @@ void openWebInterface() {
     client.stop(); // Close the client connection
     Serial.println("Client disconnected");
   }
-}
+}*/
 
 /**
  * Connect to a 2G network using an SSID and password
@@ -325,13 +476,12 @@ void openWebInterface() {
  *
  * @param receivedSSID - SSID to connect to
  * @param receivedPassword - Password of SSID to connect to
+ * @return - WiFi - status
  */
-// Todo: convert parameter to char instead of String
-void connectToSSID(String& receivedSSID, String& receivedPassword) {
+int connectToSSID(String receivedSSID, String receivedPassword) {
   Serial.print("Attempting to connect to SSID: ");
   Serial.println(receivedSSID);
 
-  int attempts = 0;
   status = WiFi.begin(receivedSSID.c_str(), receivedPassword.c_str());
 
   if (status == WL_CONNECTED) {
@@ -341,6 +491,7 @@ void connectToSSID(String& receivedSSID, String& receivedPassword) {
     Serial.println("Failed to connect to SSID.");
     WiFi.end();
   }
+  return status;
 }
 
  /*
@@ -379,5 +530,6 @@ String urlDecode(const String& input) {
   output.replace("%40", "@");
   output.replace("%5B", "[");
   output.replace("%5D", "]");
+  output.replace("%92", "'");
   return output;
 }
