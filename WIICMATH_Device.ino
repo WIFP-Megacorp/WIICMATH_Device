@@ -4,16 +4,10 @@
 #include "webpage.h"  // Include the webpage header file
 
 const uint8_t PIN_BUZZER = 8;  // Pin for the buzzer module voltage
-const uint8_t PIN_RED = 10;    // Pin for the "red" LED voltage
-const uint8_t PIN_GREEN = 11;  // Pin for the "green"LED voltage
-const uint8_t PIN_BLUE = 12;   // Pin for the "blue" LED voltage
+const uint8_t PIN_RED = 11;    // Pin for the "red" LED voltage
+const uint8_t PIN_GREEN = 12;  // Pin for the "green"LED voltage
+const uint8_t PIN_BLUE = 13;   // Pin for the "blue" LED voltage
 const uint8_t PIN_DHT = 2;     // Pin for the DHT sensor voltage
-
-unsigned long time_now = 0;
-unsigned long prev_blink = 0;
-unsigned long previous_bip = 0;
-int led_state = 0;
-int buzzer_state = 0;
 
 //DHT sensor variables and setup
 float dht_temperature;
@@ -31,12 +25,26 @@ int setting_minHum = 30;         // Minimum acceptable humidity
 int setting_maxHum = 70;         // Maximum acceptable humidity
 int setting_updateDelay = 1000;  // Delay between main loop executions
 
+// Delays and counter-variables
+unsigned long time_now = 0;                        // Current time in milliseconds
+unsigned long prev_blink = 0;                      // Time since previous LED blink
+unsigned long previous_bip = 0;                    // Time since previous buzzer sound
+int led_state = 0;                                 // The state of the LED, if it is on or off
+int buzzer_state = 0;                              // The state of the buzzer, to determine what tone to play
+unsigned long lastConnectionTime = 0;              // last time you connected to the server, in milliseconds
+const unsigned long postingInterval = 10L * 500L;  // delay between updates, in milliseconds
+
 //Access point setup
 const char* apSSID = "WIICMATH";      // SSID of the access point
 const char* apPassword = "password";  // Password for the access point
 int status = WL_IDLE_STATUS;
 
 WiFiServer server(80);
+WiFiClient client;
+
+// server address:
+char server_adr[] = "https://localhost:7005";
+//IPAddress server(64,131,82,241);
 
 //EEPROM & WiFi connection variables (EEPROM not currently used)
 char ssid[32];      // WiFi SSID can be up to 32 characters
@@ -44,8 +52,9 @@ char password[64];  // WiFi password can be up to 64 characters
 String receivedSSID = "";
 String receivedPassword = "";
 
+char mac_adr[18];
 
-
+/* -------------------------------------------------------------------------- */
 void setup() {
   // Configure pin modes
   pinMode(PIN_RED, OUTPUT);
@@ -73,6 +82,10 @@ void setup() {
     Serial.println("Please upgrade the firmware");
   }
 
+  byte mac[6];
+  WiFi.macAddress(mac);
+  convertMacAddress(mac, 6, mac_adr);
+
   // Start the setup procedure if the device isn't connected to the internet
   modeConnecting();
 
@@ -81,12 +94,12 @@ void setup() {
 }
 
 
+/* -------------------------------------------------------------------------- */
 void loop() {
   // Read DHT sensor values & set current time
   dht_humidity = dht.readHumidity();
   dht_temperature = dht.readTemperature();
   time_now = millis();
-
 
   // Process sensor data and device modes
   Serial.println("---");
@@ -110,16 +123,57 @@ void loop() {
     modeNormal();  // Device operates normally when all conditions are met
   }
 
+  // Send data to server periodically
+  if (millis() - lastConnectionTime > postingInterval) {
+    httpRequest();
+  }
 
   while (millis() < time_now + setting_updateDelay)
     ;  // Delay before next loop execution
+}
+
+
+/* -------------------------------------------------------------------------- */
+void httpRequest() {
+  // close any connection before send a new request.
+  // This will free the socket on the NINA module
+  client.stop();
+
+  // Builds json data to be sendt
+  String jsonData = "{ \"Id\": 0, \"DeviceId\": \"";
+  jsonData += mac_adr;
+  jsonData += "\", \"TimeStamp\": \"1900-01-01 00:00:00\", \"Temperature\": ";
+  jsonData += dht_temperature*100;
+  jsonData += ", \"Humidity\": ";
+  jsonData += dht_humidity*100;
+  jsonData += " }";
+
+  Serial.println(jsonData); // debug
+
+  // if there's a successful connection:
+  if (client.connect(server_adr, 80)) {
+    Serial.println("connecting...");
+    
+    // send the HTTP GET request:
+    //client.println("POST /api/insertDeviceLog HTTP/1.1");
+    client.println("POST /api/DeviceLog/insert HTTP/1.1")
+    client.println("Host: https://localhost:7005"); // TODO: change to correct address
+    client.println(jsonData);
+    client.println("Content-Type: application/json");
+    
+    // note the time that the connection was made:
+    lastConnectionTime = millis();
+  } else {
+    // if you couldn't make a connection:
+    Serial.println("connection failed");
+  }
 }
 
 /**
  * Device mode when everything is normal.
  */
 void modeNormal() {
-  Serial.println("Normal operating");
+  // Serial.println("Normal operating");
   ledSignal(0, 1, 0, 0);
 }
 
@@ -137,9 +191,11 @@ void modeConnecting() {
 
   // TODO: Connect using stored SSID & password first, if found
   // eg func named eepromReadWifiSettings() then call connectToSSID()
-  while (status != WL_CONNECTED && attempt < 5) {
-    status = connectToSSID(receivedSSID, receivedPassword);
-    attempt++;
+  if (receivedSSID != "") {
+    while (status != WL_CONNECTED && attempt < 5) {
+      status = connectToSSID(receivedSSID, receivedPassword);
+      attempt++;
+    }
   }
 
   /* Glenn - 28.09.2023
@@ -157,11 +213,10 @@ void modeConnecting() {
     bool got_ssid = false;  // Variable for if an ssid is found
 
     while (!got_ssid) {
+      time_now = millis();
       got_ssid = loopWebInterface();
-      Serial.println(got_ssid);
-      Serial.println("Loop");
 
-      ledSignal(0, 0, 1, 2000);  // Blinking led
+      ledSignal(1, 0, 1, 1000);  // Blinking led
 
       if (MODULE_BUZZER && setting_sound) {
         //Todo: firstLaunch variable, if firstLaunch don't BUZZ!!!!!!!!!!
@@ -184,16 +239,14 @@ void modeConnecting() {
           }
         }
       }
-      delay(1500);
     }
-    Serial.println("Got SSID. Attemting to connect to it");
+    Serial.println("Got SSID");
     WiFi.end();
-    Serial.println("Wifi ended.");
 
     // Connect to given SSID
     attempt = 0;
 
-    ledSignal(0, 0, 1, 0);  // Solid led
+    ledSignal(1, 0, 1, 0);  // Solid led
 
     while (status != WL_CONNECTED && attempt < 5) {
       status = connectToSSID(receivedSSID, receivedPassword);
@@ -329,10 +382,7 @@ void printWiFiStatus() {
 void openWebInterface() {
   // Create an access point
   WiFi.end();
-  Serial.println("Wifi ended.");
-  delay(2000);
 
-  Serial.println("WifiAP begun.");
   status = WiFi.beginAP(apSSID, apPassword);
 
   if (status != WL_AP_LISTENING) {
@@ -354,14 +404,13 @@ void openWebInterface() {
  * @return - If an ssid was recieved
  */
 bool loopWebInterface() {
-  bool var = false;
+  bool got_ssid = false;
 
   // compare the previous status to the current status
+  Serial.println(status);
   if (status != WiFi.status()) {
     // it has changed update the variable
     status = WiFi.status();
-    Serial.println(status);
-
     if (status == WL_AP_CONNECTED) {
       // a device has connected to the AP
       Serial.println("Device connected to AP");
@@ -372,7 +421,9 @@ bool loopWebInterface() {
   }
   Serial.println("I got this far.");
 
-  WiFiClient client = server.available();
+  //WiFiClient client = server.available();
+  client = server.available();
+
   // Glenn - 01.10.2023
   // Causes problems second time AP is created.
   // Unknown reason why.
@@ -381,7 +432,7 @@ bool loopWebInterface() {
   // Connect to client
   if (!client) {
     Serial.println("Found no clients. Returning");
-    return var;
+    return got_ssid;
   }  //If no client was found
 
   Serial.println("New client connected");
@@ -442,15 +493,15 @@ bool loopWebInterface() {
         client.println("WiFi credentials saved.");
 
 
-        var = true;  // SSID has been given, so true
-        break;       // Break free from the loop
+        got_ssid = true;  // SSID has been given, so true
+        break;            // Break free from the loop
       }
     }
   }
   // close the connection:
   client.stop();
   Serial.println("client disconnected");
-  return var;
+  return got_ssid;
 }
 // End of client connection
 
@@ -466,7 +517,6 @@ int connectToSSID(String receivedSSID, String receivedPassword) {
   Serial.print("Attempting to connect to SSID: ");
   Serial.println(receivedSSID);
 
-  Serial.println("Wifi begun.");
   status = WiFi.begin(receivedSSID.c_str(), receivedPassword.c_str());
 
   if (status == WL_CONNECTED) {
@@ -484,6 +534,28 @@ int connectToSSID(String receivedSSID, String receivedPassword) {
 void printCurrentNet() {
   Serial.print("SSID: ");
   Serial.println(WiFi.SSID());
+}
+
+/**
+ * Converts mac address bytes into char-array
+ *
+ * @param mac - Array of bytes
+ * @param len - length of array
+ * @param buffer - char array to put converted Mac address into
+ */
+void convertMacAddress(byte mac[], unsigned int len, char buffer[]) {
+  // bi - buffer_index
+  // mi - mac_index
+  unsigned int bi = 0; 
+  for (int mi = 5; mi >= 0; mi--) {
+    byte nib1 = (mac[mi] >> 4) & 0x0F;
+    byte nib2 = (mac[mi] >> 0) & 0x0F;    
+    buffer[bi*3+0] = nib1  < 0xA ? '0' + nib1  : 'A' + nib1  - 0xA;
+    buffer[bi*3+1] = nib2  < 0xA ? '0' + nib2  : 'A' + nib2  - 0xA;
+    buffer[bi*3+2] = ':';
+    bi++;
+  }
+  buffer[(len*3)-1] = '\0';
 }
 
 /**
