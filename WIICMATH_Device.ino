@@ -52,6 +52,7 @@ String receivedSSID = "";
 String receivedPassword = "";
 
 char mac_adr[18];
+int deviceId = 0;
 
 /* -------------------------------------------------------------------------- */
 void setup() {
@@ -116,13 +117,21 @@ void loop() {
     // If lost connection to the internet, attempt to connect
     // Arduino takes a few seconds to recognice a disconnect
     modeConnecting();
-  } else if (dht_temperature < setting_minTemp || dht_temperature > setting_maxTemp || dht_humidity < setting_minHum || dht_humidity > setting_maxHum) {
+  } else if (dht_temperature < setting_minTemp || dht_temperature > setting_maxTemp) {
     modeAlarm();  // If sensor readings are out of spec, activate alarm mode
+    Serial.println("A problem with Temp: min: " + String(setting_minTemp) + ", max: " + String(setting_maxTemp) + ", measured: " + String(dht_temperature, 2));
+
+  } else if (dht_humidity < setting_minHum || dht_humidity > setting_maxHum) {
+    modeAlarm();  // If sensor readings are out of spec, activate alarm mode
+    Serial.println("A problem with humidity: min: " + String(setting_minHum) + ", max: " + String(setting_maxHum) + ", measured: " + String(dht_humidity, 1));
+
   } else {
     modeNormal();  // Device operates normally when all conditions are met
   }
 
-  read_response();
+  // Needs to be called before httpRequest(). Does not work otherwise
+  http_response_handler(read_response());
+
 
   // Send data to server periodically
   if (millis() - lastConnectionTime > postingInterval) {
@@ -143,57 +152,113 @@ void httpRequest() {
   // if there's a successful connection:
   if (client.connect(server_adr, 8001)) {
     Serial.println("connecting...");
-    
+
     // send the HTTP GET request:
     client.println("GET /api/device?ArdMac=" + String(mac_adr) + " HTTP/1.1");
     client.println("Host: " + String(server_adr));
     //client.println("Content-Type: application/json");
     client.println("User-Agent: ArduinoWiFi/1.1");
+
+    if (deviceId != 0) {
+
+      // Builds json data to be sendt
+      String jsonData = "{ \"id\": 0, \"deviceId\": ";
+      jsonData += deviceId;
+      jsonData += ", \"timeStamp\": \"2023-10-24T15:44:08.107Z\", \"temperature\": ";  //Timestamp is not used directly, but needs to be in correct format
+      jsonData += int(dht_temperature * 100);
+      jsonData += ", \"humidity\": ";
+      jsonData += int(dht_humidity * 100);
+      jsonData += " }";
+
+      Serial.println(jsonData);
+
+      // send the HTTP GET request:
+      client.println("POST /api/DeviceLog/insert HTTP/1.1");
+      client.println("Host: " + String(server_adr));
+      client.println("Content-Type: application/json");
+      client.println("Content-Length: " + String(jsonData.length() + 1));
+      client.println(jsonData);
+      //{ "id": 0, "deviceId": 1, "timeStamp": "2023-10-24T15:03:54.719Z", "temperature": 2430, "humidity": 3800 }
+    }
+
     client.println("Connection: close");
     client.println();
-    
-    // Put data into variable
 
-    // Builds json data to be sendt
-    String jsonData = "{ \"Id\": 0, \"DeviceId\": \"";
-    //jsonData += DeviceId;
-    jsonData += "\", \"TimeStamp\": \"1900-01-01 00:00:00\", \"Temperature\": ";
-    jsonData += dht_temperature;
-    jsonData += ", \"Humidity\": ";
-    jsonData += dht_humidity;
-    jsonData += " }";
-
-    // send the HTTP GET request:
-    /*
-    client.println("POST /api/DeviceLog/insert HTTP/1.1");
-    client.println("Host: 172,19,48,1");
-    client.println(jsonData);
-    client.println("Content-Type: application/json");
-    */ 
     // note the time that the connection was made:
     lastConnectionTime = millis();
-  
+
   } else {
     // if you couldn't make a connection:
     Serial.println("connection failed");
   }
 }
 
-/* -------------------------------------------------------------------------- */
-void read_response() {
-  uint32_t received_data_num = 0;
+/**
+ * Function for reading http response.
+
+ * @return - Http request as String
+ */
+String read_response() {
+  String response = "";
+
+  delayMicroseconds(100);
+
   while (client.available()) {
-    /* actual data reception */
+    // actual data reception
     char c = client.read();
-    /* print data to serial port */
+    // print data to serial port
     Serial.print(c);
-    /* wrap data to 80 columns*/
-    received_data_num++;
-    if(received_data_num % 80 == 0) { 
-      Serial.println();
+
+    if (c != '\n' && c != '\r') {  // if you got anything else but a carriage return character,
+      response += c;               // add it to the end of the request
     }
-  }  
+  }
+  return response;
 }
+
+
+/**
+ * Function for filtering out json-variables.
+ *
+ * @param - String response from http request
+ */
+void http_response_handler(String var) {
+  String json = "";
+
+  if (var == "") { return; }
+  if (!var.startsWith("HTTP/1.1 200 OK")) {
+    ledSignal(1, 1, 0, 0);
+    return;
+  }
+
+  //Values to set
+  int min_temp = 0;
+  int max_temp = 0;
+  int min_hum = 0;
+  int max_hum = 0;
+
+  // Extract JSON from response variable
+  json = var.substring(var.indexOf('{') + 1, var.indexOf('}'));
+  //"id":1,"ardMAC":"DC:54:75:C5:0F:A0","name":"Glenkis_01","minThresholdTemp":15,"maxThresholdTemp":26,"minThresholdHum":20,"maxThresholdHum":70,"sound":true,"light":true
+
+  // Extract values by the index of ':' and ',' based on the placement of the key, then use +1 to exclude ':'
+  deviceId = atoi(json.substring(json.indexOf(':', json.indexOf("id")) + 1, json.indexOf(',', json.indexOf("id"))).c_str());
+  min_temp = atoi(json.substring(json.indexOf(':', json.indexOf("minThresholdTemp")) + 1, json.indexOf(',', json.indexOf("minThresholdTemp"))).c_str());
+  max_temp = atoi(json.substring(json.indexOf(':', json.indexOf("maxThresholdTemp")) + 1, json.indexOf(',', json.indexOf("maxThresholdTemp"))).c_str());
+  min_hum = atoi(json.substring(json.indexOf(':', json.indexOf("minThresholdHum")) + 1, json.indexOf(',', json.indexOf("minThresholdHum"))).c_str());
+  max_hum = atoi(json.substring(json.indexOf(':', json.indexOf("maxThresholdHum")) + 1, json.indexOf(',', json.indexOf("maxThresholdHum"))).c_str());
+  setting_sound = json.substring(json.indexOf(':', json.indexOf("sound")) + 1, json.indexOf(',', json.indexOf("sound")));
+  setting_light = json.substring(json.indexOf(':', json.indexOf("light")) + 1, json.indexOf(',', json.indexOf("light")));
+
+  // For debugging
+  //Serial.println("JasonData handled. Recieved: " + String(json));
+  //Serial.println("Retrieved values: " + String(min_temp) + ", " + String(max_temp) + ", " + String(min_hum) + ", " + String(max_hum));
+
+  setThresholds(min_temp, max_temp, min_hum, max_hum);
+}
+
+
+
 
 
 /**
@@ -373,17 +438,21 @@ void setUpdateDelay(int ms) {
 void setThresholds(int minTemperature, int maxTemperature, int minHumidity, int maxHumidity) {
   // If the given value is below or higher than the upper and lower limits of the dht11 sensor, the value is set to the sensor limit.
 
-  if (minTemperature >= 0) setting_minTemp = minTemperature;
-  else setting_minTemp = 0;
+  if (minTemperature > 0) {
+    setting_minTemp = minTemperature;
+  } else setting_minTemp = 0;
 
-  if (maxTemperature <= 50) setting_maxTemp = maxTemperature;
-  else setting_maxTemp = 50;
+  if (maxTemperature < 50) {
+    setting_maxTemp = maxTemperature;
+  } else setting_maxTemp = 50;
 
-  if (minHumidity >= 20) setting_minHum = minHumidity;
-  else setting_minHum = 20;
+  if (minHumidity > 20) {
+    setting_minHum = minHumidity;
+  } else setting_minHum = 20;
 
-  if (maxHumidity <= 80) setting_maxHum = maxHumidity;
-  else setting_maxHum = 80;
+  if (maxHumidity < 80) {
+    setting_maxHum = maxHumidity;
+  } else setting_maxHum = 80;
 }
 
 
@@ -572,16 +641,16 @@ void printCurrentNet() {
 void convertMacAddress(byte mac[], unsigned int len, char buffer[]) {
   // bi - buffer_index
   // mi - mac_index
-  unsigned int bi = 0; 
+  unsigned int bi = 0;
   for (int mi = 5; mi >= 0; mi--) {
     byte nib1 = (mac[mi] >> 4) & 0x0F;
-    byte nib2 = (mac[mi] >> 0) & 0x0F;    
-    buffer[bi*3+0] = nib1  < 0xA ? '0' + nib1  : 'A' + nib1  - 0xA;
-    buffer[bi*3+1] = nib2  < 0xA ? '0' + nib2  : 'A' + nib2  - 0xA;
-    buffer[bi*3+2] = ':';
+    byte nib2 = (mac[mi] >> 0) & 0x0F;
+    buffer[bi * 3 + 0] = nib1 < 0xA ? '0' + nib1 : 'A' + nib1 - 0xA;
+    buffer[bi * 3 + 1] = nib2 < 0xA ? '0' + nib2 : 'A' + nib2 - 0xA;
+    buffer[bi * 3 + 2] = ':';
     bi++;
   }
-  buffer[(len*3)-1] = '\0';
+  buffer[(len * 3) - 1] = '\0';
 }
 
 /**
