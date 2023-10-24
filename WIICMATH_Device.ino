@@ -53,6 +53,7 @@ String receivedPassword = "";
 
 char mac_adr[18];
 int deviceId = 0;
+int switcher = 0;
 
 /* -------------------------------------------------------------------------- */
 void setup() {
@@ -135,7 +136,16 @@ void loop() {
 
   // Send data to server periodically
   if (millis() - lastConnectionTime > postingInterval) {
-    httpRequest();
+    if (switcher == 0) {
+      switcher = 1;
+      httpRequest();
+
+    } else {
+      switcher = 0;
+      httpPosting();
+    }
+    // note the time that the connection was made:
+    lastConnectionTime = millis();
   }
 
   while (millis() < time_now + setting_updateDelay)
@@ -158,7 +168,24 @@ void httpRequest() {
     client.println("Host: " + String(server_adr));
     //client.println("Content-Type: application/json");
     client.println("User-Agent: ArduinoWiFi/1.1");
+    client.println("Connection: close");
+    client.println();
 
+
+  } else {
+    // if you couldn't make a connection:
+    Serial.println("connection failed");
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+void httpPosting() {
+  // close any connection before send a new request.
+  // This will free the socket on the NINA module
+  client.stop();
+
+  // if there's a successful connection:
+  if (client.connect(server_adr, 8001)) {
     if (deviceId != 0) {
 
       // Builds json data to be sendt
@@ -175,21 +202,23 @@ void httpRequest() {
       // send the HTTP GET request:
       client.println("POST /api/DeviceLog/insert HTTP/1.1");
       client.println("Host: " + String(server_adr));
+      client.println("Connection: close");
       client.println("Content-Type: application/json");
       client.println("Content-Length: " + String(jsonData.length() + 1));
+      client.println();
       client.println(jsonData);
-      //{ "id": 0, "deviceId": 1, "timeStamp": "2023-10-24T15:03:54.719Z", "temperature": 2430, "humidity": 3800 }
+
+      while (client.connected()) {
+        if (client.available()) {
+          char c = client.read();
+          Serial.print(c);
+        }
+      }
+
+    } else {
+      // if you couldn't make a connection:
+      Serial.println("connection failed");
     }
-
-    client.println("Connection: close");
-    client.println();
-
-    // note the time that the connection was made:
-    lastConnectionTime = millis();
-
-  } else {
-    // if you couldn't make a connection:
-    Serial.println("connection failed");
   }
 }
 
