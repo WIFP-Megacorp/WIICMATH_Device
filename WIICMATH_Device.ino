@@ -43,8 +43,7 @@ WiFiServer server(80);
 WiFiClient client;
 
 // server address:
-char server_adr[] = "https://localhost:7005";
-//IPAddress server(64,131,82,241);
+char server_adr[] = "162.248.102.181";
 
 //EEPROM & WiFi connection variables (EEPROM not currently used)
 char ssid[32];      // WiFi SSID can be up to 32 characters
@@ -123,6 +122,8 @@ void loop() {
     modeNormal();  // Device operates normally when all conditions are met
   }
 
+  read_response();
+
   // Send data to server periodically
   if (millis() - lastConnectionTime > postingInterval) {
     httpRequest();
@@ -139,35 +140,61 @@ void httpRequest() {
   // This will free the socket on the NINA module
   client.stop();
 
-  // Builds json data to be sendt
-  String jsonData = "{ \"Id\": 0, \"DeviceId\": \"";
-  jsonData += mac_adr;
-  jsonData += "\", \"TimeStamp\": \"1900-01-01 00:00:00\", \"Temperature\": ";
-  jsonData += dht_temperature*100;
-  jsonData += ", \"Humidity\": ";
-  jsonData += dht_humidity*100;
-  jsonData += " }";
-
-  Serial.println(jsonData); // debug
-
   // if there's a successful connection:
-  if (client.connect(server_adr, 80)) {
+  if (client.connect(server_adr, 8001)) {
     Serial.println("connecting...");
     
     // send the HTTP GET request:
-    //client.println("POST /api/insertDeviceLog HTTP/1.1");
-    client.println("POST /api/DeviceLog/insert HTTP/1.1")
-    client.println("Host: https://localhost:7005"); // TODO: change to correct address
+    client.println("GET /api/device?ArdMac=" + String(mac_adr) + " HTTP/1.1");
+    client.println("Host: " + String(server_adr));
+    //client.println("Content-Type: application/json");
+    client.println("User-Agent: ArduinoWiFi/1.1");
+    client.println("Connection: close");
+    client.println();
+    
+    // Put data into variable
+
+    // Builds json data to be sendt
+    String jsonData = "{ \"Id\": 0, \"DeviceId\": \"";
+    //jsonData += DeviceId;
+    jsonData += "\", \"TimeStamp\": \"1900-01-01 00:00:00\", \"Temperature\": ";
+    jsonData += dht_temperature;
+    jsonData += ", \"Humidity\": ";
+    jsonData += dht_humidity;
+    jsonData += " }";
+
+    // send the HTTP GET request:
+    /*
+    client.println("POST /api/DeviceLog/insert HTTP/1.1");
+    client.println("Host: 172,19,48,1");
     client.println(jsonData);
     client.println("Content-Type: application/json");
-    
+    */ 
     // note the time that the connection was made:
     lastConnectionTime = millis();
+  
   } else {
     // if you couldn't make a connection:
     Serial.println("connection failed");
   }
 }
+
+/* -------------------------------------------------------------------------- */
+void read_response() {
+  uint32_t received_data_num = 0;
+  while (client.available()) {
+    /* actual data reception */
+    char c = client.read();
+    /* print data to serial port */
+    Serial.print(c);
+    /* wrap data to 80 columns*/
+    received_data_num++;
+    if(received_data_num % 80 == 0) { 
+      Serial.println();
+    }
+  }  
+}
+
 
 /**
  * Device mode when everything is normal.
@@ -407,7 +434,6 @@ bool loopWebInterface() {
   bool got_ssid = false;
 
   // compare the previous status to the current status
-  Serial.println(status);
   if (status != WiFi.status()) {
     // it has changed update the variable
     status = WiFi.status();
