@@ -4,16 +4,10 @@
 #include "webpage.h"  // Include the webpage header file
 
 const uint8_t PIN_BUZZER = 8;  // Pin for the buzzer module voltage
-const uint8_t PIN_RED = 10;    // Pin for the "red" LED voltage
-const uint8_t PIN_GREEN = 11;  // Pin for the "green"LED voltage
-const uint8_t PIN_BLUE = 12;   // Pin for the "blue" LED voltage
+const uint8_t PIN_RED = 11;    // Pin for the "red" LED voltage
+const uint8_t PIN_GREEN = 12;  // Pin for the "green"LED voltage
+const uint8_t PIN_BLUE = 13;   // Pin for the "blue" LED voltage
 const uint8_t PIN_DHT = 2;     // Pin for the DHT sensor voltage
-
-unsigned long time_now = 0;
-unsigned long prev_blink = 0;
-unsigned long previous_bip = 0;
-int led_state = 0;
-int buzzer_state = 0;
 
 //DHT sensor variables and setup
 float dht_temperature;
@@ -31,12 +25,25 @@ int setting_minHum = 30;         // Minimum acceptable humidity
 int setting_maxHum = 70;         // Maximum acceptable humidity
 int setting_updateDelay = 1000;  // Delay between main loop executions
 
+// Delays and counter-variables
+unsigned long time_now = 0;                        // Current time in milliseconds
+unsigned long prev_blink = 0;                      // Time since previous LED blink
+unsigned long previous_bip = 0;                    // Time since previous buzzer sound
+int led_state = 0;                                 // The state of the LED, if it is on or off
+int buzzer_state = 0;                              // The state of the buzzer, to determine what tone to play
+unsigned long lastConnectionTime = 0;              // last time you connected to the server, in milliseconds
+const unsigned long postingInterval = 10L * 500L;  // delay between updates, in milliseconds
+
 //Access point setup
 const char* apSSID = "WIICMATH";      // SSID of the access point
 const char* apPassword = "password";  // Password for the access point
 int status = WL_IDLE_STATUS;
 
 WiFiServer server(80);
+WiFiClient client;
+
+// server address:
+char server_adr[] = "162.248.102.181";
 
 //EEPROM & WiFi connection variables (EEPROM not currently used)
 char ssid[32];      // WiFi SSID can be up to 32 characters
@@ -44,8 +51,11 @@ char password[64];  // WiFi password can be up to 64 characters
 String receivedSSID = "";
 String receivedPassword = "";
 
+char mac_adr[18];
+int deviceId = 0;
+int switcher = 0;
 
-
+/* -------------------------------------------------------------------------- */
 void setup() {
   // Configure pin modes
   pinMode(PIN_RED, OUTPUT);
@@ -73,6 +83,10 @@ void setup() {
     Serial.println("Please upgrade the firmware");
   }
 
+  byte mac[6];
+  WiFi.macAddress(mac);
+  convertMacAddress(mac, 6, mac_adr);
+
   // Start the setup procedure if the device isn't connected to the internet
   modeConnecting();
 
@@ -81,12 +95,12 @@ void setup() {
 }
 
 
+/* -------------------------------------------------------------------------- */
 void loop() {
   // Read DHT sensor values & set current time
   dht_humidity = dht.readHumidity();
   dht_temperature = dht.readTemperature();
   time_now = millis();
-
 
   // Process sensor data and device modes
   Serial.println("---");
@@ -104,22 +118,183 @@ void loop() {
     // If lost connection to the internet, attempt to connect
     // Arduino takes a few seconds to recognice a disconnect
     modeConnecting();
-  } else if (dht_temperature < setting_minTemp || dht_temperature > setting_maxTemp || dht_humidity < setting_minHum || dht_humidity > setting_maxHum) {
+  } else if (dht_temperature < setting_minTemp || dht_temperature > setting_maxTemp) {
     modeAlarm();  // If sensor readings are out of spec, activate alarm mode
+    Serial.println("A problem with Temp: min: " + String(setting_minTemp) + ", max: " + String(setting_maxTemp) + ", measured: " + String(dht_temperature, 2));
+
+  } else if (dht_humidity < setting_minHum || dht_humidity > setting_maxHum) {
+    modeAlarm();  // If sensor readings are out of spec, activate alarm mode
+    Serial.println("A problem with humidity: min: " + String(setting_minHum) + ", max: " + String(setting_maxHum) + ", measured: " + String(dht_humidity, 1));
+
   } else {
     modeNormal();  // Device operates normally when all conditions are met
   }
 
+  // Needs to be called before httpRequest(). Does not work otherwise
+  http_response_handler(read_response());
+
+
+  // Send data to server periodically
+  if (millis() - lastConnectionTime > postingInterval) {
+    if (switcher == 0) {
+      switcher = 1;
+      httpRequest();
+
+    } else {
+      switcher = 0;
+      httpPosting();
+    }
+    // note the time that the connection was made:
+    lastConnectionTime = millis();
+  }
 
   while (millis() < time_now + setting_updateDelay)
     ;  // Delay before next loop execution
 }
 
+
+/* -------------------------------------------------------------------------- */
+void httpRequest() {
+  // close any connection before send a new request.
+  // This will free the socket on the NINA module
+  client.stop();
+
+  // if there's a successful connection:
+  if (client.connect(server_adr, 8001)) {
+    Serial.println("connecting...");
+
+    // send the HTTP GET request:
+    client.println("GET /api/device?ArdMac=" + String(mac_adr) + " HTTP/1.1");
+    client.println("Host: " + String(server_adr));
+    //client.println("Content-Type: application/json");
+    client.println("User-Agent: ArduinoWiFi/1.1");
+    client.println("Connection: close");
+    client.println();
+
+
+  } else {
+    // if you couldn't make a connection:
+    Serial.println("connection failed");
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+void httpPosting() {
+  // close any connection before send a new request.
+  // This will free the socket on the NINA module
+  client.stop();
+
+  // if there's a successful connection:
+  if (client.connect(server_adr, 8001)) {
+    if (deviceId != 0) {
+
+      // Builds json data to be sendt
+      String jsonData = "{ \"id\": 0, \"deviceId\": ";
+      jsonData += deviceId;
+      jsonData += ", \"timeStamp\": \"2023-10-24T15:44:08.107Z\", \"temperature\": ";  //Timestamp is not used directly, but needs to be in correct format
+      jsonData += int(dht_temperature * 100);
+      jsonData += ", \"humidity\": ";
+      jsonData += int(dht_humidity * 100);
+      jsonData += " }";
+
+      Serial.println(jsonData);
+
+      // send the HTTP GET request:
+      client.println("POST /api/DeviceLog/insert HTTP/1.1");
+      client.println("Host: " + String(server_adr));
+      client.println("Connection: close");
+      client.println("Content-Type: application/json");
+      client.println("Content-Length: " + String(jsonData.length() + 1));
+      client.println();
+      client.println(jsonData);
+
+      while (client.connected()) {
+        if (client.available()) {
+          char c = client.read();
+          Serial.print(c);
+        }
+      }
+
+    } else {
+      // if you couldn't make a connection:
+      Serial.println("connection failed");
+    }
+  }
+}
+
+/**
+ * Function for reading http response.
+
+ * @return - Http request as String
+ */
+String read_response() {
+  String response = "";
+
+  delayMicroseconds(100);
+
+  while (client.available()) {
+    // actual data reception
+    char c = client.read();
+    // print data to serial port
+    Serial.print(c);
+
+    if (c != '\n' && c != '\r') {  // if you got anything else but a carriage return character,
+      response += c;               // add it to the end of the request
+    }
+  }
+  return response;
+}
+
+
+/**
+ * Function for filtering out json-variables.
+ *
+ * @param - String response from http request
+ */
+void http_response_handler(String var) {
+  String json = "";
+
+  if (var == "") { return; }
+  if (!var.startsWith("HTTP/1.1 200 OK")) {
+    ledSignal(1, 1, 0, 0);
+    return;
+  }
+
+  //Values to set
+  int min_temp = 0;
+  int max_temp = 0;
+  int min_hum = 0;
+  int max_hum = 0;
+
+  // Extract JSON from response variable
+  json = var.substring(var.indexOf('{') + 1, var.indexOf('}'));
+  //"id":1,"ardMAC":"DC:54:75:C5:0F:A0","name":"Glenkis_01","minThresholdTemp":15,"maxThresholdTemp":26,"minThresholdHum":20,"maxThresholdHum":70,"sound":true,"light":true
+
+  // Extract values by the index of ':' and ',' based on the placement of the key, then use +1 to exclude ':'
+  deviceId = atoi(json.substring(json.indexOf(':', json.indexOf("id")) + 1, json.indexOf(',', json.indexOf("id"))).c_str());
+  min_temp = atoi(json.substring(json.indexOf(':', json.indexOf("minThresholdTemp")) + 1, json.indexOf(',', json.indexOf("minThresholdTemp"))).c_str());
+  max_temp = atoi(json.substring(json.indexOf(':', json.indexOf("maxThresholdTemp")) + 1, json.indexOf(',', json.indexOf("maxThresholdTemp"))).c_str());
+  min_hum = atoi(json.substring(json.indexOf(':', json.indexOf("minThresholdHum")) + 1, json.indexOf(',', json.indexOf("minThresholdHum"))).c_str());
+  max_hum = atoi(json.substring(json.indexOf(':', json.indexOf("maxThresholdHum")) + 1, json.indexOf(',', json.indexOf("maxThresholdHum"))).c_str());
+  setting_sound = json.substring(json.indexOf(':', json.indexOf("sound")) + 1, json.indexOf(',', json.indexOf("sound")));
+  setting_light = json.substring(json.indexOf(':', json.indexOf("light")) + 1, json.indexOf(',', json.indexOf("light")));
+
+  // For debugging
+  //Serial.println("JasonData handled. Recieved: " + String(json));
+  //Serial.println("Retrieved values: " + String(min_temp) + ", " + String(max_temp) + ", " + String(min_hum) + ", " + String(max_hum));
+
+  setThresholds(min_temp, max_temp, min_hum, max_hum);
+}
+
+
+
+
+
 /**
  * Device mode when everything is normal.
  */
 void modeNormal() {
-  Serial.println("Normal operating");
+  // Serial.println("Normal operating");
   ledSignal(0, 1, 0, 0);
 }
 
@@ -137,9 +312,11 @@ void modeConnecting() {
 
   // TODO: Connect using stored SSID & password first, if found
   // eg func named eepromReadWifiSettings() then call connectToSSID()
-  while (status != WL_CONNECTED && attempt < 5) {
-    status = connectToSSID(receivedSSID, receivedPassword);
-    attempt++;
+  if (receivedSSID != "") {
+    while (status != WL_CONNECTED && attempt < 5) {
+      status = connectToSSID(receivedSSID, receivedPassword);
+      attempt++;
+    }
   }
 
   /* Glenn - 28.09.2023
@@ -157,11 +334,10 @@ void modeConnecting() {
     bool got_ssid = false;  // Variable for if an ssid is found
 
     while (!got_ssid) {
+      time_now = millis();
       got_ssid = loopWebInterface();
-      Serial.println(got_ssid);
-      Serial.println("Loop");
 
-      ledSignal(0, 0, 1, 2000);  // Blinking led
+      ledSignal(1, 0, 1, 1000);  // Blinking led
 
       if (MODULE_BUZZER && setting_sound) {
         //Todo: firstLaunch variable, if firstLaunch don't BUZZ!!!!!!!!!!
@@ -184,16 +360,14 @@ void modeConnecting() {
           }
         }
       }
-      delay(1500);
     }
-    Serial.println("Got SSID. Attemting to connect to it");
+    Serial.println("Got SSID");
     WiFi.end();
-    Serial.println("Wifi ended.");
 
     // Connect to given SSID
     attempt = 0;
 
-    ledSignal(0, 0, 1, 0);  // Solid led
+    ledSignal(1, 0, 1, 0);  // Solid led
 
     while (status != WL_CONNECTED && attempt < 5) {
       status = connectToSSID(receivedSSID, receivedPassword);
@@ -293,17 +467,21 @@ void setUpdateDelay(int ms) {
 void setThresholds(int minTemperature, int maxTemperature, int minHumidity, int maxHumidity) {
   // If the given value is below or higher than the upper and lower limits of the dht11 sensor, the value is set to the sensor limit.
 
-  if (minTemperature >= 0) setting_minTemp = minTemperature;
-  else setting_minTemp = 0;
+  if (minTemperature > 0) {
+    setting_minTemp = minTemperature;
+  } else setting_minTemp = 0;
 
-  if (maxTemperature <= 50) setting_maxTemp = maxTemperature;
-  else setting_maxTemp = 50;
+  if (maxTemperature < 50) {
+    setting_maxTemp = maxTemperature;
+  } else setting_maxTemp = 50;
 
-  if (minHumidity >= 20) setting_minHum = minHumidity;
-  else setting_minHum = 20;
+  if (minHumidity > 20) {
+    setting_minHum = minHumidity;
+  } else setting_minHum = 20;
 
-  if (maxHumidity <= 80) setting_maxHum = maxHumidity;
-  else setting_maxHum = 80;
+  if (maxHumidity < 80) {
+    setting_maxHum = maxHumidity;
+  } else setting_maxHum = 80;
 }
 
 
@@ -329,10 +507,7 @@ void printWiFiStatus() {
 void openWebInterface() {
   // Create an access point
   WiFi.end();
-  Serial.println("Wifi ended.");
-  delay(2000);
 
-  Serial.println("WifiAP begun.");
   status = WiFi.beginAP(apSSID, apPassword);
 
   if (status != WL_AP_LISTENING) {
@@ -354,14 +529,12 @@ void openWebInterface() {
  * @return - If an ssid was recieved
  */
 bool loopWebInterface() {
-  bool var = false;
+  bool got_ssid = false;
 
   // compare the previous status to the current status
   if (status != WiFi.status()) {
     // it has changed update the variable
     status = WiFi.status();
-    Serial.println(status);
-
     if (status == WL_AP_CONNECTED) {
       // a device has connected to the AP
       Serial.println("Device connected to AP");
@@ -372,7 +545,9 @@ bool loopWebInterface() {
   }
   Serial.println("I got this far.");
 
-  WiFiClient client = server.available();
+  //WiFiClient client = server.available();
+  client = server.available();
+
   // Glenn - 01.10.2023
   // Causes problems second time AP is created.
   // Unknown reason why.
@@ -381,7 +556,7 @@ bool loopWebInterface() {
   // Connect to client
   if (!client) {
     Serial.println("Found no clients. Returning");
-    return var;
+    return got_ssid;
   }  //If no client was found
 
   Serial.println("New client connected");
@@ -442,15 +617,15 @@ bool loopWebInterface() {
         client.println("WiFi credentials saved.");
 
 
-        var = true;  // SSID has been given, so true
-        break;       // Break free from the loop
+        got_ssid = true;  // SSID has been given, so true
+        break;            // Break free from the loop
       }
     }
   }
   // close the connection:
   client.stop();
   Serial.println("client disconnected");
-  return var;
+  return got_ssid;
 }
 // End of client connection
 
@@ -466,7 +641,6 @@ int connectToSSID(String receivedSSID, String receivedPassword) {
   Serial.print("Attempting to connect to SSID: ");
   Serial.println(receivedSSID);
 
-  Serial.println("Wifi begun.");
   status = WiFi.begin(receivedSSID.c_str(), receivedPassword.c_str());
 
   if (status == WL_CONNECTED) {
@@ -484,6 +658,28 @@ int connectToSSID(String receivedSSID, String receivedPassword) {
 void printCurrentNet() {
   Serial.print("SSID: ");
   Serial.println(WiFi.SSID());
+}
+
+/**
+ * Converts mac address bytes into char-array
+ *
+ * @param mac - Array of bytes
+ * @param len - length of array
+ * @param buffer - char array to put converted Mac address into
+ */
+void convertMacAddress(byte mac[], unsigned int len, char buffer[]) {
+  // bi - buffer_index
+  // mi - mac_index
+  unsigned int bi = 0;
+  for (int mi = 5; mi >= 0; mi--) {
+    byte nib1 = (mac[mi] >> 4) & 0x0F;
+    byte nib2 = (mac[mi] >> 0) & 0x0F;
+    buffer[bi * 3 + 0] = nib1 < 0xA ? '0' + nib1 : 'A' + nib1 - 0xA;
+    buffer[bi * 3 + 1] = nib2 < 0xA ? '0' + nib2 : 'A' + nib2 - 0xA;
+    buffer[bi * 3 + 2] = ':';
+    bi++;
+  }
+  buffer[(len * 3) - 1] = '\0';
 }
 
 /**
